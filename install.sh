@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -e
+
 # Verificar se o Docker está instalado
 if ! command -v docker &> /dev/null; then
     echo "Docker não encontrado. Instalando Docker..."
@@ -19,13 +21,15 @@ fi
 # Verificar se o NVIDIA Container Toolkit está instalado
 if ! command -v nvidia-container-toolkit &> /dev/null; then
     echo "NVIDIA Container Toolkit não encontrado. Instalando..."
+
     # Adicionar a chave GPG do repositório
-    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | \
+        sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
 
     # Adicionar o repositório do NVIDIA Container Toolkit
     curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
-    sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
-    sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+        sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+        sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
 
     # Atualizar a lista de pacotes e instalar o NVIDIA Container Toolkit
     sudo apt-get update
