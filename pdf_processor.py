@@ -335,7 +335,7 @@ class PDFProcessor:
         response = requests.post(
             self.ollama_url,
             json={
-                "model": "llama2",
+                "model": "llava:13b",
                 "prompt": prompt,
                 "stream": False
             }
