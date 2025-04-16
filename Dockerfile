@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y \
     tesseract-ocr-por \
     poppler-utils \
     libmagic1 \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Criar diretório da aplicação
@@ -27,17 +28,16 @@ COPY pdf_processor.py .
 RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Instalar dependências Python
+# Instalar dependências Python com suporte a CUDA
+RUN pip install --upgrade pip
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Baixar modelo spaCy
 RUN python -m spacy download pt_core_news_lg
 
-# Configurar variáveis de ambiente para Replicate
-ENV REPLICATE_API_TOKEN="seu_token_aqui"
 
 # Expor porta
 EXPOSE 8000
 
 # Comando para iniciar a aplicação
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"] 
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
