@@ -6,6 +6,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Instalar dependências do sistema
 RUN apt-get update && apt-get install -y \
     python3.10 \
+    libgl1-mesa-glx \
     python3-pip \
     python3.10-venv \
     tesseract-ocr \
