@@ -4,13 +4,35 @@ API robusta para extração de informações de PDFs de contracheques utilizando
 
 ## Requisitos
 
-- Python 3.8+
-- CUDA 11.8+ (para aproveitar a GPU)
-- Tesseract OCR
-- Poppler
+- Docker
+- Docker Compose
+- NVIDIA Container Toolkit
+- NVIDIA GPU com drivers CUDA
 - Ollama (com modelo llama2)
 
-## Instalação
+## Instalação com Docker (Recomendado)
+
+1. Clone o repositório:
+```bash
+git clone <seu-repositorio>
+cd <seu-repositorio>
+```
+
+2. Execute o script de instalação:
+```bash
+chmod +x install.sh
+./install.sh
+```
+
+O script irá:
+- Instalar Docker e Docker Compose (se necessário)
+- Instalar NVIDIA Container Toolkit
+- Construir e iniciar o container
+- Configurar para iniciar automaticamente com o sistema
+
+## Instalação Manual
+
+Se preferir instalar manualmente:
 
 1. Instale as dependências do sistema:
 
@@ -48,6 +70,24 @@ python -m spacy download pt_core_news_lg
 
 ## Uso
 
+### Com Docker
+
+O serviço estará disponível automaticamente em http://localhost:8000 após a instalação.
+
+Para gerenciar o serviço:
+```bash
+# Verificar status
+sudo systemctl status pdf-extractor
+
+# Reiniciar serviço
+sudo systemctl restart pdf-extractor
+
+# Ver logs
+docker-compose logs -f
+```
+
+### Sem Docker
+
 1. Inicie o servidor:
 ```bash
 python main.py
@@ -55,7 +95,9 @@ python main.py
 
 2. A API estará disponível em http://localhost:8000
 
-3. Use o endpoint `/extrair` para processar PDFs:
+## Endpoint de Extração
+
+Use o endpoint `/extrair` para processar PDFs:
 ```bash
 curl -X POST "http://localhost:8000/extrair" \
      -H "accept: application/json" \

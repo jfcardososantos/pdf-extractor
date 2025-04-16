@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  pdf-extractor:
+    build: .
+    container_name: pdf-extractor
+    restart: always
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./temp:/app/temp
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      - OLLAMA_HOST=http://192.168.15.222:11434
+    networks:
+      - pdf-extractor-network
+
+networks:
+  pdf-extractor-network:
+    driver: bridge 
