@@ -32,6 +32,10 @@ sudo sh cuda_11.8.0_520.61.05_linux.run
 
 3. Instale as dependências Python:
 ```bash
+sudo apt install python3.12-venv
+sudo apt install python3-pip
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
