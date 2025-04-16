@@ -313,7 +313,7 @@ class PDFProcessor:
     def _usar_ollama_fallback(self, texto: str) -> ExtracaoResponse:
         prompt = f"""
         Analise o seguinte texto de um contracheque e extraia as informações solicitadas.
-        Retorne apenas um JSON válido com a seguinte estrutura:
+        Retorne APENAS um JSON válido com a seguinte estrutura, sem nenhum texto adicional:
         {{
             "nome_completo": "nome do funcionário",
             "matricula": "número da matrícula",
@@ -323,7 +323,7 @@ class PDFProcessor:
                     "codigo": "código da vantagem",
                     "descricao": "descrição da vantagem",
                     "percentual_duracao": "percentual ou duração (se houver)",
-                    "valor": valor numérico
+                    "valor": 0.0
                 }}
             ]
         }}
@@ -335,7 +335,7 @@ class PDFProcessor:
         response = requests.post(
             self.ollama_url,
             json={
-                "model": "llava:13b",
+                "model": "gemma3:12b",
                 "prompt": prompt,
                 "stream": False
             }
@@ -346,11 +346,38 @@ class PDFProcessor:
 
         try:
             resultado_texto = response.json()["response"]
+            
+            # Limpar o texto para garantir um JSON válido
+            resultado_texto = resultado_texto.strip()
+            
+            # Encontrar o primeiro '{' e o último '}'
             inicio_json = resultado_texto.find("{")
             fim_json = resultado_texto.rfind("}") + 1
+            
+            if inicio_json == -1 or fim_json == 0:
+                raise Exception("Não foi possível encontrar um JSON válido na resposta")
+            
             json_str = resultado_texto[inicio_json:fim_json]
             
-            dados = json.loads(json_str)
+            # Tentar limpar caracteres inválidos
+            json_str = json_str.replace('\n', ' ').replace('\r', '')
+            json_str = re.sub(r',\s*}', '}', json_str)  # Remove vírgulas extras antes de }
+            json_str = re.sub(r',\s*]', ']', json_str)  # Remove vírgulas extras antes de ]
+            
+            # Tentar fazer o parse do JSON
+            try:
+                dados = json.loads(json_str)
+            except json.JSONDecodeError as e:
+                print(f"Erro ao decodificar JSON: {str(e)}")
+                print(f"JSON problemático: {json_str}")
+                raise
+            
+            # Validar campos obrigatórios
+            campos_obrigatorios = ["nome_completo", "matricula", "mes_ano_referencia", "vantagens"]
+            for campo in campos_obrigatorios:
+                if campo not in dados:
+                    raise Exception(f"Campo obrigatório '{campo}' não encontrado na resposta")
+            
             return ExtracaoResponse(**dados)
             
         except Exception as e:
