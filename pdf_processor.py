@@ -7,13 +7,19 @@ import pdfplumber
 import spacy
 from pdf2image import convert_from_path
 import pytesseract
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 import json
 import requests
 from pydantic import BaseModel
 from Levenshtein import ratio
 import re
 from transformers import pipeline
+from PIL import Image
+import io
+import magic
+import base64
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 class Vantagem(BaseModel):
     codigo: str
@@ -54,9 +60,19 @@ class PDFProcessor:
             'matricula': r'MATR[ÍI]CULA[:\s]*(\d+)',
             'mes_ano': r'REFER[ÊE]NCIA[:\s]*([A-Za-z]+/\d{4})',
             'valor': r'R?\$?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)',
+            'percentual': r'(\d+(?:,\d+)?%)',
         }
+        
+        # Vetorizador para comparação de texto
+        self.vectorizer = TfidfVectorizer()
+        
+        # Treinar vetorizador com as vantagens
+        self.vectorizer.fit_transform(self.vantagens_chave)
 
     def process_pdf(self, pdf_path: str) -> ExtracaoResponse:
+        # Verificar tipo de arquivo
+        file_type = magic.from_file(pdf_path, mime=True)
+        
         # Tentar primeiro com pdfplumber para PDFs digitais
         texto_digital = self._extrair_texto_digital(pdf_path)
         
@@ -67,7 +83,7 @@ class PDFProcessor:
             texto_completo = texto_digital
         
         # Usar múltiplas estratégias para extrair informações
-        resultado = self._extrair_informacoes_estruturadas(texto_completo)
+        resultado = self._extrair_informacoes_estruturadas(texto_completo, pdf_path)
         
         return resultado
 
@@ -124,7 +140,7 @@ class PDFProcessor:
         
         return enhanced
 
-    def _extrair_informacoes_estruturadas(self, texto: str) -> ExtracaoResponse:
+    def _extrair_informacoes_estruturadas(self, texto: str, pdf_path: str) -> ExtracaoResponse:
         # Extrair informações usando regex
         matricula = self._extrair_com_regex(texto, self.patterns['matricula'])
         mes_ano = self._extrair_com_regex(texto, self.patterns['mes_ano'])
@@ -135,8 +151,8 @@ class PDFProcessor:
         # Extrair nome usando NER
         nome_completo = self._extrair_nome(doc)
         
-        # Extrair vantagens
-        vantagens = self._extrair_vantagens(texto)
+        # Extrair vantagens com Llava para maior precisão
+        vantagens = self._extrair_vantagens_com_llava(texto, pdf_path)
         
         # Validar e normalizar dados
         if not nome_completo or not matricula or not mes_ano:
@@ -165,23 +181,104 @@ class PDFProcessor:
         match = re.search(nome_pattern, doc.text, re.IGNORECASE)
         return match.group(1).strip() if match else ""
 
-    def _extrair_vantagens(self, texto: str) -> List[Vantagem]:
+    def _extrair_vantagens_com_llava(self, texto: str, pdf_path: str) -> List[Vantagem]:
         vantagens = []
-        linhas = texto.split('\n')
+        
+        # Converter PDF para imagem para análise com Llava
+        images = convert_from_path(pdf_path)
+        
+        for image in images:
+            # Salvar imagem temporariamente
+            temp_img_path = "temp_image.png"
+            image.save(temp_img_path)
+            
+            # Usar Llava para analisar a imagem
+            llava_response = self._analisar_com_llava(temp_img_path)
+            
+            # Processar resposta do Llava
+            vantagens_llava = self._processar_resposta_llava(llava_response)
+            
+            # Adicionar vantagens encontradas
+            vantagens.extend(vantagens_llava)
+            
+            # Limpar arquivo temporário
+            os.remove(temp_img_path)
+        
+        # Remover duplicatas
+        vantagens = self._remover_duplicatas(vantagens)
+        
+        return vantagens
+
+    def _analisar_com_llava(self, img_path: str) -> str:
+        # Converter imagem para base64
+        with open(img_path, "rb") as img_file:
+            img_data = base64.b64encode(img_file.read()).decode('utf-8')
+        
+        # Preparar prompt para Llava
+        prompt = """
+        Analise esta imagem de um contracheque e extraia as seguintes informações:
+        1. Identifique todas as vantagens listadas (VENCIMENTO, GRAT.A.FIS, GRAT.A.FIS JUD, AD.T.SERV, CET-H.ESP, PDF, AD.NOT.INCORP, DIF SALARIO/RRA, TOTAL INFORMADO)
+        2. Para cada vantagem, identifique:
+           - O código/descrição
+           - O percentual ou duração (se houver)
+           - O valor monetário
+        3. Diferencie claramente entre percentual/duração e valor monetário
+        4. Retorne apenas as vantagens encontradas, sem texto adicional
+        """
+        
+        # Enviar para Llava via Ollama
+        try:
+            response = requests.post(
+                self.ollama_url,
+                json={
+                    "model": "llava:13b",
+                    "prompt": prompt,
+                    "stream": False,
+                    "images": [img_data]
+                }
+            )
+            
+            if response.status_code != 200:
+                print(f"Erro ao usar Llava: {response.status_code}")
+                return ""
+                
+            return response.json()["response"]
+        except Exception as e:
+            print(f"Erro ao usar Llava: {str(e)}")
+            return ""
+
+    def _processar_resposta_llava(self, resposta: str) -> List[Vantagem]:
+        vantagens = []
+        
+        # Dividir resposta em linhas
+        linhas = resposta.split('\n')
         
         for linha in linhas:
+            # Procurar por vantagens conhecidas
             for vantagem in self.vantagens_chave:
-                if ratio(vantagem.lower(), linha.lower()) > 0.8:  # Usar Levenshtein para matching fuzzy
+                if ratio(vantagem.lower(), linha.lower()) > 0.8:
                     # Extrair valor
                     valor_match = re.search(self.patterns['valor'], linha)
                     valor = self._normalizar_valor(valor_match.group(1)) if valor_match else 0.0
                     
-                    # Extrair percentual/duração se existir
+                    # Extrair percentual/duração
                     percentual = ""
-                    if "%" in linha:
-                        percentual_match = re.search(r'(\d+(?:,\d+)?%)', linha)
-                        if percentual_match:
-                            percentual = percentual_match.group(1)
+                    percentual_match = re.search(self.patterns['percentual'], linha)
+                    if percentual_match:
+                        percentual = percentual_match.group(1)
+                    
+                    # Verificar se o valor não é na verdade um percentual
+                    if valor > 0 and percentual:
+                        # Verificar qual é mais provável ser o valor monetário
+                        valor_pos = linha.find(str(valor))
+                        percentual_pos = linha.find(percentual)
+                        
+                        # Se o percentual está antes do valor, pode ser que estejam trocados
+                        if percentual_pos < valor_pos:
+                            # Trocar valores
+                            temp_valor = valor
+                            valor = float(percentual.replace('%', '').replace(',', '.'))
+                            percentual = f"{temp_valor}%"
                     
                     vantagens.append(Vantagem(
                         codigo=vantagem,
@@ -191,6 +288,27 @@ class PDFProcessor:
                     ))
         
         return vantagens
+
+    def _remover_duplicatas(self, vantagens: List[Vantagem]) -> List[Vantagem]:
+        # Usar conjunto para remover duplicatas
+        vantagens_dict = {}
+        
+        for v in vantagens:
+            # Usar código como chave
+            if v.codigo not in vantagens_dict:
+                vantagens_dict[v.codigo] = v
+            else:
+                # Se já existe, verificar qual tem mais informações
+                existente = vantagens_dict[v.codigo]
+                
+                # Se o novo tem percentual e o existente não, atualizar
+                if v.percentual_duracao and not existente.percentual_duracao:
+                    vantagens_dict[v.codigo] = v
+                # Se o novo tem valor e o existente não, atualizar
+                elif v.valor > 0 and existente.valor == 0:
+                    vantagens_dict[v.codigo] = v
+        
+        return list(vantagens_dict.values())
 
     def _usar_ollama_fallback(self, texto: str) -> ExtracaoResponse:
         prompt = f"""
@@ -217,7 +335,7 @@ class PDFProcessor:
         response = requests.post(
             self.ollama_url,
             json={
-                "model": "gemma3:12b",
+                "model": "llama2",
                 "prompt": prompt,
                 "stream": False
             }

@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y \
     tesseract-ocr \
     tesseract-ocr-por \
     poppler-utils \
+    libmagic1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Criar diretório da aplicação
@@ -31,6 +32,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Baixar modelo spaCy
 RUN python -m spacy download pt_core_news_lg
+
+# Configurar variáveis de ambiente para Replicate
+ENV REPLICATE_API_TOKEN="seu_token_aqui"
 
 # Expor porta
 EXPOSE 8000

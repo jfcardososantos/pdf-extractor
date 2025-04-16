@@ -1,6 +1,6 @@
 # PDF Extractor API
 
-API robusta para extração de informações de PDFs de contracheques utilizando processamento de imagem, GPU e IA.
+API robusta para extração de informações de PDFs de contracheques utilizando processamento de imagem, GPU, IA e visão computacional avançada.
 
 ## Requisitos
 
@@ -9,6 +9,7 @@ API robusta para extração de informações de PDFs de contracheques utilizando
 - NVIDIA Container Toolkit
 - NVIDIA GPU com drivers CUDA
 - Ollama (com modelo llama2)
+- Conta no Replicate (para acesso ao Llava)
 
 ## Instalação com Docker (Recomendado)
 
@@ -18,7 +19,8 @@ git clone <seu-repositorio>
 cd <seu-repositorio>
 ```
 
-2. Execute o script de instalação:
+
+3. Execute o script de instalação:
 ```bash
 chmod +x install.sh
 ./install.sh
@@ -39,10 +41,10 @@ Se preferir instalar manualmente:
 ```bash
 # Ubuntu/Debian
 sudo apt-get update
-sudo apt-get install -y tesseract-ocr tesseract-ocr-por poppler-utils
+sudo apt-get install -y tesseract-ocr tesseract-ocr-por poppler-utils libmagic1
 
 # macOS
-brew install tesseract tesseract-lang poppler
+brew install tesseract tesseract-lang poppler libmagic
 ```
 
 2. Instale o CUDA Toolkit (se ainda não tiver):
@@ -66,7 +68,12 @@ pip install -r requirements.txt
 python -m spacy download pt_core_news_lg
 ```
 
-5. Certifique-se que o Ollama está rodando e acessível em http://192.168.15.222:11434
+5. Configure o token do Replicate:
+```bash
+export REPLICATE_API_TOKEN="seu_token_aqui"
+```
+
+6. Certifique-se que o Ollama está rodando e acessível em http://192.168.15.222:11434
 
 ## Uso
 
@@ -147,6 +154,29 @@ A API retorna um JSON com a seguinte estrutura:
 - Pré-processamento de imagem avançado
 - Matching fuzzy para identificação de vantagens
 - Fallback para Ollama quando necessário
+- **Análise visual com Llava-13b para maior precisão**
+- **Detecção inteligente de percentuais e valores**
+- **Remoção de duplicatas e consolidação de dados**
+- **Validação cruzada de informações**
+
+## Precisão e Confiabilidade
+
+O sistema utiliza múltiplas estratégias para garantir a máxima precisão:
+
+1. **Análise Visual com Llava-13b**: 
+   - Modelo de visão computacional avançado
+   - Capaz de entender o contexto visual do contracheque
+   - Diferencia com precisão entre percentuais e valores
+
+2. **Validação Cruzada**:
+   - Compara resultados de diferentes métodos de extração
+   - Usa posicionamento relativo para identificar valores corretos
+   - Verifica consistência entre percentuais e valores
+
+3. **Processamento Inteligente**:
+   - Detecta e corrige confusões entre percentuais e valores
+   - Consolida informações de múltiplas extrações
+   - Remove duplicatas mantendo as informações mais completas
 
 ## Documentação da API
 
