@@ -19,11 +19,19 @@ fi
 # Verificar se o NVIDIA Container Toolkit está instalado
 if ! command -v nvidia-container-toolkit &> /dev/null; then
     echo "NVIDIA Container Toolkit não encontrado. Instalando..."
-    distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
-    curl -s -L https://nvidia.github.io/nvidia-docker/gpgkey | sudo apt-key add -
-    curl -s -L https://nvidia.github.io/nvidia-docker/$distribution/nvidia-docker.list | sudo tee /etc/apt/sources.list.d/nvidia-docker.list
+    # Adicionar a chave GPG do repositório
+    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+
+    # Adicionar o repositório do NVIDIA Container Toolkit
+    curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+    sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+    sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+
+    # Atualizar a lista de pacotes e instalar o NVIDIA Container Toolkit
     sudo apt-get update
-    sudo apt-get install -y nvidia-docker2
+    sudo apt-get install -y nvidia-container-toolkit
+
+    # Reiniciar o serviço do Docker
     sudo systemctl restart docker
 fi
 
@@ -36,7 +44,7 @@ docker-compose up -d --build
 
 # Configurar para iniciar com o sistema
 echo "Configurando para iniciar com o sistema..."
-sudo tee /etc/systemd/system/pdf-extractor.service << EOF
+sudo tee /etc/systemd/system/pdf-extractor.service > /dev/null << EOF
 [Unit]
 Description=PDF Extractor Docker Container
 Requires=docker.service
@@ -60,4 +68,4 @@ sudo systemctl enable pdf-extractor.service
 
 echo "Instalação concluída! O serviço iniciará automaticamente com o sistema."
 echo "Para verificar o status, use: sudo systemctl status pdf-extractor"
-echo "Para ver os logs, use: docker-compose logs -f" 
+echo "Para ver os logs, use: docker-compose logs -f"
