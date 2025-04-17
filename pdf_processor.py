@@ -99,8 +99,8 @@ class PDFProcessor:
         return texto
 
     def _processar_como_imagem(self, pdf_path: str) -> str:
-        # Converter PDF para imagens
-        images = convert_from_path(pdf_path, dpi=300)  # Aumentando o DPI para melhor qualidade
+        # Converter PDF para imagens com alta resolução
+        images = convert_from_path(pdf_path, dpi=400)  # Aumentando ainda mais o DPI
         
         texto_completo = ""
         for image in images:
@@ -110,19 +110,43 @@ class PDFProcessor:
             # Pré-processamento da imagem
             processed_image = self._preprocess_image(opencv_image)
             
-            # Extrair texto usando EasyOCR (GPU)
-            resultados = self.reader.readtext(processed_image, 
-                                            paragraph=True,  # Agrupar em parágrafos
-                                            batch_size=4,    # Processar em lotes
-                                            detail=0)        # Retornar apenas texto
+            # Extrair texto usando EasyOCR com configurações específicas
+            resultados = self.reader.readtext(
+                processed_image,
+                paragraph=False,  # Desativando agrupamento para manter estrutura
+                allowlist='0123456789,.-ABCDEFGHIJKLMNOPQRSTUVWXYZ/% ',  # Lista de caracteres permitidos
+                batch_size=4,
+                detail=1  # Retornar detalhes para processamento adicional
+            )
             
-            texto = " ".join(resultados)
+            # Processar resultados mantendo a estrutura tabular
+            linhas_texto = []
+            for result in resultados:
+                bbox = result[0]  # Coordenadas do texto
+                texto = result[1]  # Texto detectado
+                conf = result[2]  # Confiança da detecção
+                
+                # Filtrar resultados com baixa confiança
+                if conf < 0.5:
+                    continue
+                
+                # Organizar por posição vertical (y) para manter estrutura
+                y_pos = (bbox[0][1] + bbox[2][1]) / 2
+                linhas_texto.append((y_pos, texto))
+            
+            # Ordenar por posição vertical e juntar texto
+            linhas_texto.sort(key=lambda x: x[0])
+            texto = "\n".join(texto for _, texto in linhas_texto)
             
             # Backup com Tesseract se necessário
             if len(texto.strip()) < 50:
-                texto = pytesseract.image_to_string(processed_image, 
-                                                  lang='por',
-                                                  config='--psm 6')  # Modo de segmentação para bloco uniforme
+                # Configurar Tesseract para tabelas
+                custom_config = r'--oem 3 --psm 6 -c preserve_interword_spaces=1'
+                texto = pytesseract.image_to_string(
+                    processed_image,
+                    lang='por',
+                    config=custom_config
+                )
             
             texto_completo += texto + "\n"
         
@@ -132,28 +156,33 @@ class PDFProcessor:
         # Converter para escala de cinza
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         
-        # Aplicar desfoque gaussiano para reduzir ruído
-        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        # Aumentar resolução
+        height, width = gray.shape
+        gray = cv2.resize(gray, (width*2, height*2), interpolation=cv2.INTER_CUBIC)
         
-        # Aplicar threshold adaptativo
+        # Normalizar contraste
+        gray = cv2.normalize(gray, None, 0, 255, cv2.NORM_MINMAX)
+        
+        # Aplicar threshold adaptativo com parâmetros ajustados
         thresh = cv2.adaptiveThreshold(
-            blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-            cv2.THRESH_BINARY, 11, 2
+            gray, 255, 
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY,
+            21,  # Tamanho do bloco aumentado
+            10   # Constante ajustada
         )
         
-        # Remover ruído
+        # Remover ruído mantendo linhas finas
         kernel = np.ones((2,2), np.uint8)
-        denoised = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+        cleaned = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
         
-        # Aumentar contraste
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-        enhanced = clahe.apply(denoised)
+        # Melhorar definição de texto
+        kernel = np.array([[-1,-1,-1],
+                         [-1, 9,-1],
+                         [-1,-1,-1]])
+        sharpened = cv2.filter2D(cleaned, -1, kernel)
         
-        # Dilatar para melhorar a legibilidade
-        kernel = np.ones((1,1), np.uint8)
-        dilated = cv2.dilate(enhanced, kernel, iterations=1)
-        
-        return dilated
+        return sharpened
 
     def _extrair_informacoes_estruturadas(self, texto: str, pdf_path: str) -> ExtracaoResponse:
         # Extrair informações usando regex
@@ -347,10 +376,17 @@ class PDFProcessor:
         return list(vantagens_dict.values())
 
     def _extrair_total_vantagens(self, texto: str) -> float:
-        # Procurar por padrões de total
-        total_match = re.search(self.patterns['total_vantagens'], texto, re.IGNORECASE)
-        if total_match:
-            return self._normalizar_valor(total_match.group(1))
+        # Padrão específico para o total de vantagens no contracheque
+        padrao = r'TOTAL\s+DE\s+VANTAGENS\s*[\r\n]*\s*([\d\.,]+)'
+        match = re.search(padrao, texto, re.IGNORECASE)
+        if match:
+            valor_str = match.group(1).strip()
+            try:
+                # Tratar diferentes formatos de número
+                valor_str = valor_str.replace('.', '').replace(',', '.')
+                return float(valor_str)
+            except ValueError:
+                print(f"Erro ao converter valor total: {valor_str}")
         return 0.0
 
     def _usar_ollama_fallback(self, texto: str) -> ExtracaoResponse:
