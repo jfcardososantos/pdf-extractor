@@ -265,12 +265,12 @@ class PDFProcessor:
         4. Retorne apenas as vantagens encontradas, sem texto adicional
         """
         
-        # Enviar para Llava via Ollama
+        # Enviar para Gemma via Ollama
         try:
             response = requests.post(
                 self.ollama_url,
                 json={
-                    "model": "llava:13b",
+                    "model": "gemma3:12b",
                     "prompt": prompt,
                     "stream": False,
                     "images": [img_data]
@@ -278,12 +278,12 @@ class PDFProcessor:
             )
             
             if response.status_code != 200:
-                print(f"Erro ao usar Llava: {response.status_code}")
+                print(f"Erro ao usar Gemma3: {response.status_code}")
                 return ""
                 
             return response.json()["response"]
         except Exception as e:
-            print(f"Erro ao usar Llava: {str(e)}")
+            print(f"Erro ao usar Gemma3: {str(e)}")
             return ""
 
     def _processar_resposta_llava(self, resposta: str) -> List[Vantagem]:
