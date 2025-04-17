@@ -326,10 +326,20 @@ class PDFProcessor:
         return list(vantagens_dict.values())
 
     def _extrair_total_informado(self, texto: str) -> float:
-        # Procurar por padrões de total
-        total_match = re.search(self.patterns['total_vantagens'], texto, re.IGNORECASE)
-        if total_match:
-            return self._normalizar_valor(total_match.group(1))
+        """Extrai o total de vantagens informado no documento"""
+        # Tentar diferentes padrões de texto para o total
+        padroes = [
+            r'TOTAL\s+DE\s+VANTAGENS[:\s]*R?\$?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)',
+            r'TOTAL\s+VANTAGENS[:\s]*R?\$?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)',
+            r'TOTAL\s+INFORMADO[:\s]*R?\$?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)'
+        ]
+        
+        for padrao in padroes:
+            match = re.search(padrao, texto, re.IGNORECASE)
+            if match:
+                valor_str = match.group(1)
+                return self._normalizar_valor(valor_str)
+        
         return 0.0
 
     def _usar_ollama_fallback(self, texto: str) -> ExtracaoResponse:
@@ -409,9 +419,12 @@ class PDFProcessor:
             raise Exception(f"Erro ao processar resposta do Ollama: {str(e)}")
 
     def _normalizar_valor(self, valor_str: str) -> float:
+        """Normaliza um valor monetário para float"""
         try:
-            valor_str = valor_str.replace("R$", "").strip()
-            valor_str = valor_str.replace(".", "").replace(",", ".")
+            # Remover R$ e espaços
+            valor_str = valor_str.replace('R$', '').strip()
+            # Substituir ponto por nada (em milhares) e vírgula por ponto (decimal)
+            valor_str = valor_str.replace('.', '').replace(',', '.')
             return float(valor_str)
         except:
             return 0.0 
