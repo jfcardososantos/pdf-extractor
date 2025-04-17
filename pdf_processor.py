@@ -100,7 +100,7 @@ class PDFProcessor:
 
     def _processar_como_imagem(self, pdf_path: str) -> str:
         # Converter PDF para imagens
-        images = convert_from_path(pdf_path)
+        images = convert_from_path(pdf_path, dpi=300)  # Aumentando o DPI para melhor qualidade
         
         texto_completo = ""
         for image in images:
@@ -111,12 +111,18 @@ class PDFProcessor:
             processed_image = self._preprocess_image(opencv_image)
             
             # Extrair texto usando EasyOCR (GPU)
-            resultados = self.reader.readtext(processed_image)
-            texto = " ".join([result[1] for result in resultados])
+            resultados = self.reader.readtext(processed_image, 
+                                            paragraph=True,  # Agrupar em parágrafos
+                                            batch_size=4,    # Processar em lotes
+                                            detail=0)        # Retornar apenas texto
+            
+            texto = " ".join(resultados)
             
             # Backup com Tesseract se necessário
             if len(texto.strip()) < 50:
-                texto = pytesseract.image_to_string(processed_image, lang='por')
+                texto = pytesseract.image_to_string(processed_image, 
+                                                  lang='por',
+                                                  config='--psm 6')  # Modo de segmentação para bloco uniforme
             
             texto_completo += texto + "\n"
         
@@ -126,20 +132,28 @@ class PDFProcessor:
         # Converter para escala de cinza
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         
+        # Aplicar desfoque gaussiano para reduzir ruído
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        
         # Aplicar threshold adaptativo
         thresh = cv2.adaptiveThreshold(
-            gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+            blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
             cv2.THRESH_BINARY, 11, 2
         )
         
         # Remover ruído
-        denoised = cv2.fastNlMeansDenoising(thresh)
+        kernel = np.ones((2,2), np.uint8)
+        denoised = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
         
         # Aumentar contraste
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
         enhanced = clahe.apply(denoised)
         
-        return enhanced
+        # Dilatar para melhorar a legibilidade
+        kernel = np.ones((1,1), np.uint8)
+        dilated = cv2.dilate(enhanced, kernel, iterations=1)
+        
+        return dilated
 
     def _extrair_informacoes_estruturadas(self, texto: str, pdf_path: str) -> ExtracaoResponse:
         # Extrair informações usando regex
