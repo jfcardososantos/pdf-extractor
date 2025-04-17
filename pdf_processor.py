@@ -33,8 +33,6 @@ class ExtracaoResponse(BaseModel):
     mes_ano_referencia: str
     vantagens: List[Vantagem]
     total_vantagens: float
-    total_calculado: float
-    confere: bool
 
 class PDFProcessor:
     def __init__(self):
@@ -160,18 +158,6 @@ class PDFProcessor:
         # Extrair total informado no documento
         total_vantagens = self._extrair_total_vantagens(texto)
         
-        # Calcular total das vantagens após todo o processamento
-        total_calculado = 0.0
-        for v in vantagens:
-            total_calculado = round(total_calculado + v.valor, 2)  # Arredondando para 2 casas decimais
-            print(f"Adicionando vantagem {v.codigo} ({v.descricao}) com valor {v.valor:.2f}")
-        
-        print(f"Total calculado: {total_calculado:.2f}")
-        print(f"Total informado: {total_vantagens:.2f}")
-        
-        # Verificar se os totais conferem (com margem de erro de 1 centavo)
-        confere = abs(total_vantagens - total_calculado) < 0.01
-        
         # Validar e normalizar dados
         if not nome_completo or not matricula or not mes_ano:
             # Usar Ollama como fallback
@@ -183,8 +169,6 @@ class PDFProcessor:
             mes_ano_referencia=mes_ano,
             vantagens=vantagens,
             total_vantagens=total_vantagens,
-            total_calculado=total_calculado,
-            confere=confere
         )
 
     def _extrair_com_regex(self, texto: str, pattern: str) -> str:
@@ -372,8 +356,6 @@ class PDFProcessor:
                 }}
             ],
             "total_vantagens": 0.0,
-            "total_calculado": 0.0,
-            "confere": false
         }}
 
         Texto do contracheque:
