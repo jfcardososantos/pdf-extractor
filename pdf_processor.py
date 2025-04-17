@@ -161,7 +161,14 @@ class PDFProcessor:
         total_vantagens = self._extrair_total_vantagens(texto)
         
         # Calcular total das vantagens
-        total_calculado = sum(v.valor for v in vantagens)
+        total_calculado = 0.0
+        for v in vantagens:
+            if v.valor > 0:  # Só soma valores positivos
+                total_calculado += v.valor
+                print(f"Adicionando vantagem {v.codigo} com valor {v.valor}")
+        
+        print(f"Total calculado: {total_calculado}")
+        print(f"Total informado: {total_vantagens}")
         
         # Verificar se os totais conferem (com margem de erro de 1 centavo)
         confere = abs(total_vantagens - total_calculado) < 0.01
@@ -199,29 +206,46 @@ class PDFProcessor:
     def _extrair_vantagens_com_llava(self, texto: str, pdf_path: str) -> List[Vantagem]:
         vantagens = []
         
-        # Converter PDF para imagem para análise com Llava
-        images = convert_from_path(pdf_path)
-        
-        for image in images:
-            # Salvar imagem temporariamente
-            temp_img_path = "temp_image.png"
-            image.save(temp_img_path)
+        # Extrair vantagens usando Llava
+        response = self._analisar_com_llava(pdf_path)
+        if response and 'response' in response:
+            vantagens_texto = response['response']
             
-            # Usar Llava para analisar a imagem
-            llava_response = self._analisar_com_llava(temp_img_path)
-            
-            # Processar resposta do Llava
-            vantagens_llava = self._processar_resposta_llava(llava_response)
-            
-            # Adicionar vantagens encontradas
-            vantagens.extend(vantagens_llava)
-            
-            # Limpar arquivo temporário
-            os.remove(temp_img_path)
-        
-        # Remover duplicatas
-        vantagens = self._remover_duplicatas(vantagens)
-        
+            # Processar cada linha de vantagem
+            for linha in vantagens_texto.split('\n'):
+                if not linha.strip():
+                    continue
+                    
+                try:
+                    # Extrair código, descrição e valor
+                    partes = linha.split('|')
+                    if len(partes) >= 3:
+                        codigo = partes[0].strip()
+                        descricao = partes[1].strip()
+                        valor_str = partes[2].strip()
+                        
+                        # Converter valor para float
+                        valor = 0.0
+                        try:
+                            valor = float(valor_str.replace('R$', '').replace('.', '').replace(',', '.'))
+                        except ValueError:
+                            print(f"Erro ao converter valor: {valor_str}")
+                            continue
+                            
+                        # Criar objeto Vantagem
+                        vantagem = Vantagem(
+                            codigo=codigo,
+                            descricao=descricao,
+                            percentual_duracao="",  # Não usado no momento
+                            valor=valor
+                        )
+                        vantagens.append(vantagem)
+                        print(f"Vantagem extraída: {vantagem}")
+                except Exception as e:
+                    print(f"Erro ao processar linha: {linha}")
+                    print(f"Erro: {str(e)}")
+                    continue
+                    
         return vantagens
 
     def _analisar_com_llava(self, img_path: str) -> str:
