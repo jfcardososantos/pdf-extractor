@@ -160,12 +160,11 @@ class PDFProcessor:
         # Extrair total informado no documento
         total_vantagens = self._extrair_total_vantagens(texto)
         
-        # Calcular total das vantagens
+        # Calcular total das vantagens após todo o processamento
         total_calculado = 0.0
         for v in vantagens:
-            if v.valor > 0:  # Só soma valores positivos
-                total_calculado += v.valor
-                print(f"Adicionando vantagem {v.codigo} com valor {v.valor}")
+            total_calculado += v.valor
+            print(f"Adicionando vantagem {v.codigo} com valor {v.valor}")
         
         print(f"Total calculado: {total_calculado}")
         print(f"Total informado: {total_vantagens}")
