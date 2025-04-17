@@ -32,14 +32,16 @@ class ExtracaoResponse(BaseModel):
     matricula: str
     mes_ano_referencia: str
     vantagens: List[Vantagem]
+    total_informado: float
+    total_calculado: float
+    confere: bool
 
 class PDFProcessor:
     def __init__(self):
         self.ollama_url = "http://192.168.15.222:11434/api/generate"
         self.vantagens_chave = [
             "VENCIMENTO", "GRAT.A.FIS", "GRAT.A.FIS JUD", "AD.T.SERV",
-            "CET-H.ESP", "PDF", "AD.NOT.INCORP", "DIF SALARIO/RRA",
-            "TOTAL INFORMADO"
+            "CET-H.ESP", "PDF", "AD.NOT.INCORP", "DIF SALARIO/RRA"
         ]
         
         # Verificar se CUDA está disponível
@@ -61,6 +63,7 @@ class PDFProcessor:
             'mes_ano': r'REFER[ÊE]NCIA[:\s]*([A-Za-z]+/\d{4})',
             'valor': r'R?\$?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)',
             'percentual': r'(\d+(?:,\d+)?%)',
+            'total_vantagens': r'TOTAL\s+(?:DE\s+)?VANTAGENS[:\s]*R?\$?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)',
         }
         
         # Vetorizador para comparação de texto
@@ -154,6 +157,15 @@ class PDFProcessor:
         # Extrair vantagens com Llava para maior precisão
         vantagens = self._extrair_vantagens_com_llava(texto, pdf_path)
         
+        # Extrair total informado no documento
+        total_informado = self._extrair_total_informado(texto)
+        
+        # Calcular total das vantagens
+        total_calculado = sum(v.valor for v in vantagens)
+        
+        # Verificar se os totais conferem (com margem de erro de 1 centavo)
+        confere = abs(total_informado - total_calculado) < 0.01
+        
         # Validar e normalizar dados
         if not nome_completo or not matricula or not mes_ano:
             # Usar Ollama como fallback
@@ -163,7 +175,10 @@ class PDFProcessor:
             nome_completo=nome_completo,
             matricula=matricula,
             mes_ano_referencia=mes_ano,
-            vantagens=vantagens
+            vantagens=vantagens,
+            total_informado=total_informado,
+            total_calculado=total_calculado,
+            confere=confere
         )
 
     def _extrair_com_regex(self, texto: str, pattern: str) -> str:
@@ -310,6 +325,13 @@ class PDFProcessor:
         
         return list(vantagens_dict.values())
 
+    def _extrair_total_informado(self, texto: str) -> float:
+        # Procurar por padrões de total
+        total_match = re.search(self.patterns['total_vantagens'], texto, re.IGNORECASE)
+        if total_match:
+            return self._normalizar_valor(total_match.group(1))
+        return 0.0
+
     def _usar_ollama_fallback(self, texto: str) -> ExtracaoResponse:
         prompt = f"""
         Analise o seguinte texto de um contracheque e extraia as informações solicitadas.
@@ -325,7 +347,10 @@ class PDFProcessor:
                     "percentual_duracao": "percentual ou duração (se houver)",
                     "valor": 0.0
                 }}
-            ]
+            ],
+            "total_informado": 0.0,
+            "total_calculado": 0.0,
+            "confere": false
         }}
 
         Texto do contracheque:

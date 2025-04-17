@@ -35,6 +35,9 @@ class ExtracaoResponse(BaseModel):
     matricula: str
     mes_ano_referencia: str
     vantagens: List[Vantagem]
+    total_informado: float
+    total_calculado: float
+    confere: bool
 
 @app.post("/extrair", response_model=ExtracaoResponse)
 async def extrair_informacoes(pdf_file: UploadFile = File(...)):
