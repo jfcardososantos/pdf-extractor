@@ -8,7 +8,10 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./temp:/app/temp
+      - ./main.py:/app/main.py
+      - ./pdf_processor.py:/app/pdf_processor.py
+      - pdf_cache:/app/cache
+      - model_cache:/root/.cache
     deploy:
       resources:
         reservations:
@@ -17,9 +20,19 @@ services:
               count: 1
               capabilities: [gpu]
     environment:
-      - OLLAMA_HOST=http://192.168.15.222:11434
+      - CUDA_VISIBLE_DEVICES=0
+      - TRANSFORMERS_CACHE=/app/cache/transformers
+      - TORCH_HOME=/app/cache/torch
+      - HF_HOME=/app/cache/huggingface
+      - EASYOCR_MODULE_PATH=/app/cache/easyocr
     networks:
       - pdf-extractor-network
+
+volumes:
+  pdf_cache:
+    name: pdf_extractor_cache
+  model_cache:
+    name: pdf_extractor_model_cache
 
 networks:
   pdf-extractor-network:
