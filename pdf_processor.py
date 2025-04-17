@@ -32,7 +32,7 @@ class ExtracaoResponse(BaseModel):
     matricula: str
     mes_ano_referencia: str
     vantagens: List[Vantagem]
-    total_informado: float
+    total_vantagens: float
     total_calculado: float
     confere: bool
 
@@ -158,13 +158,13 @@ class PDFProcessor:
         vantagens = self._extrair_vantagens_com_llava(texto, pdf_path)
         
         # Extrair total informado no documento
-        total_informado = self._extrair_total_informado(texto)
+        total_vantagens = self._extrair_total_vantagens(texto)
         
         # Calcular total das vantagens
         total_calculado = sum(v.valor for v in vantagens)
         
         # Verificar se os totais conferem (com margem de erro de 1 centavo)
-        confere = abs(total_informado - total_calculado) < 0.01
+        confere = abs(total_vantagens - total_calculado) < 0.01
         
         # Validar e normalizar dados
         if not nome_completo or not matricula or not mes_ano:
@@ -176,7 +176,7 @@ class PDFProcessor:
             matricula=matricula,
             mes_ano_referencia=mes_ano,
             vantagens=vantagens,
-            total_informado=total_informado,
+            total_vantagens=total_vantagens,
             total_calculado=total_calculado,
             confere=confere
         )
@@ -325,7 +325,7 @@ class PDFProcessor:
         
         return list(vantagens_dict.values())
 
-    def _extrair_total_informado(self, texto: str) -> float:
+    def _extrair_total_vantagens(self, texto: str) -> float:
         # Procurar por padrões de total
         total_match = re.search(self.patterns['total_vantagens'], texto, re.IGNORECASE)
         if total_match:
@@ -348,7 +348,7 @@ class PDFProcessor:
                     "valor": 0.0
                 }}
             ],
-            "total_informado": 0.0,
+            "total_vantagens": 0.0,
             "total_calculado": 0.0,
             "confere": false
         }}
