@@ -163,11 +163,11 @@ class PDFProcessor:
         # Calcular total das vantagens após todo o processamento
         total_calculado = 0.0
         for v in vantagens:
-            total_calculado += v.valor
-            print(f"Adicionando vantagem {v.codigo} com valor {v.valor}")
+            total_calculado = round(total_calculado + v.valor, 2)  # Arredondando para 2 casas decimais
+            print(f"Adicionando vantagem {v.codigo} ({v.descricao}) com valor {v.valor:.2f}")
         
-        print(f"Total calculado: {total_calculado}")
-        print(f"Total informado: {total_vantagens}")
+        print(f"Total calculado: {total_calculado:.2f}")
+        print(f"Total informado: {total_vantagens:.2f}")
         
         # Verificar se os totais conferem (com margem de erro de 1 centavo)
         confere = abs(total_vantagens - total_calculado) < 0.01
