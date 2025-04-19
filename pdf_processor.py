@@ -600,43 +600,39 @@ class PDFProcessor:
                 pass
 
             prompt = """
-            Você é um assistente especializado em extrair informações de contracheques. 
-            Sua tarefa é analisar esta imagem de um contracheque e extrair informações específicas.
-            
-            Na tabela de VANTAGENS, existem as seguintes colunas em ordem:
-            1. Cód. (código da vantagem)
-            2. Descrição (nome da vantagem)
-            3. Perct./Horas (percentual ou horas, quando aplicável)
-            4. Período (quando aplicável)
-            5. Valor(R$) (valor monetário da vantagem)
+            Analise esta tabela de VANTAGENS de um contracheque. A tabela tem exatamente estas colunas em ordem:
 
-            Por favor, extraia e organize as informações exatamente neste formato:
+            | Cód. | Descrição | Perct./Horas | Período | Valor(R$) |
 
-            DADOS PESSOAIS:
-            Nome: [nome completo do servidor]
-            Matrícula: [número da matrícula]
-            Mês/Ano Referência: [mês/ano]
+            Regras de extração:
+            1. Código: Sempre existe e mantém zeros à esquerda (ex: 0022P)
+            2. Descrição: Sempre existe (ex: Vencimento Inc)
+            3. Perct./Horas: Pode estar vazio ou ter um valor (ex: 30.00)
+            4. Período: Pode estar vazio ou ter um valor (ex: 02.2021)
+            5. Valor(R$): SEMPRE tem um valor monetário (ex: 2.693,71)
+
+            Extraia cada linha da tabela exatamente neste formato:
 
             VANTAGENS:
-            [Liste cada vantagem encontrada no formato:]
-            1. Código: [código numérico]
-               Descrição: [nome/descrição da vantagem]
-               Percentual/Horas: [valor do percentual ou horas - se não houver, deixar "0,00" ou em branco]
-               Período: [período se houver - se não houver, deixar em branco]
-               Valor: R$ [valor monetário da última coluna]
+            1. Código: 0022P
+               Descrição: Vencimento Inc
+               Percentual/Horas: 30.00
+               Período: 02.2021
+               Valor: R$ 2.693,71
 
-            TOTAL DE VANTAGENS: R$ [valor total]
+            2. Código: [próximo código]
+               ...
 
-            Regras importantes:
-            1. Este é um sistema automatizado de processamento de documentos, então você DEVE fornecer as informações solicitadas
-            2. Mantenha os zeros à esquerda nos códigos
-            3. Preserve os valores monetários exatamente como aparecem
-            4. Para campos Percentual/Horas, use "0,00" se aparecer zerado ou deixe em branco se não existir
-            5. Para campos Período, deixe em branco se não existir
-            6. O valor monetário DEVE ser extraído da última coluna (Valor(R$))
-            7. Não confunda o percentual/horas com o valor monetário
-            8. Não inclua avisos ou disclaimers na sua resposta
-            9. Retorne apenas as informações no formato solicitado
+            TOTAL DE VANTAGENS: R$ [soma exata de todos os valores]
+
+            IMPORTANTE:
+            - A coluna Valor(R$) é a ÚLTIMA coluna da tabela
+            - Todo valor em R$ DEVE ter centavos (vírgula e 2 dígitos)
+            - Mantenha EXATAMENTE a formatação dos números como está na imagem
+            - Não pule nenhuma linha da tabela
+            - Não invente valores
+            - Se Perct./Horas ou Período estiverem vazios, deixe em branco (não use 0,00)
+            - O valor em R$ NUNCA está vazio e SEMPRE deve ser extraído
             """
 
             response = requests.post(
