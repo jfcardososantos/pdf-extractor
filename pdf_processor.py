@@ -46,7 +46,7 @@ class PDFProcessor:
         warnings.filterwarnings('ignore', category=UserWarning, module='torch.nn.modules.conv')
         warnings.filterwarnings('ignore', message='Some weights of BertForTokenClassification')
         
-        self.ollama_url = "http://localhost:11434/api/generate"
+        self.ollama_url = "http://192.168.15.222:11434/api/generate"
         self.vantagens_chave = [
             "VENCIMENTO", "GRAT.A.FIS", "GRAT.A.FIS JUD", "AD.T.SERV",
             "CET-H.ESP", "PDF", "AD.NOT.INCORP", "DIF SALARIO/RRA"
