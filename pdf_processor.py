@@ -109,14 +109,14 @@ class PDFProcessor:
             response = requests.post(
                 self.ollama_url,
                 json={
-                    "model": "llava:13b",
+                    "model": "llama3.2-vision:11b-instruct-q8_0",
                     "prompt": "test",
                     "stream": False
                 }
             )
             if response.status_code == 404:
-                self.logger.error("Modelo llava:13b não encontrado. Por favor, instale usando 'ollama pull llava:13b'")
-                raise Exception("Modelo llava:13b não disponível")
+                self.logger.error("Modelo llama3.2-vision:11b-instruct-q8_0 não encontrado. Por favor, instale usando 'ollama pull llama3.2-vision:11b-instruct-q8_0'")
+                raise Exception("Modelo llama3.2-vision:11b-instruct-q8_0 não disponível")
             
             # Verificar Gemma 12b
             response = requests.post(
@@ -140,16 +140,16 @@ class PDFProcessor:
 
     def process_pdf(self, pdf_path: str) -> dict:
         try:
-            # Primeiro tenta com Llava (processamento de imagem)
-            resultado_llava = self._processar_com_llava(pdf_path)
-            if resultado_llava and "erro" not in resultado_llava.lower():
-                # Se Llava retornou algo útil, usa o resultado
+            # Processar com Llama Vision
+            resultado_llama = self._processar_com_llama_vision(pdf_path)
+            if resultado_llama and "erro" not in resultado_llama.lower():
+                # Se Llama retornou algo útil, usa o resultado
                 texto_completo = self._extrair_texto_digital(pdf_path)
                 if len(texto_completo.strip()) < 100:
                     texto_completo = self._processar_como_imagem(pdf_path)
-                return {"response": resultado_llava, "texto_extraido": texto_completo}
+                return {"response": resultado_llama, "texto_extraido": texto_completo}
             
-            # Se Llava falhou, tenta com Gemma usando o texto
+            # Se Llama falhou, tenta com Gemma usando o texto
             texto_completo = self._extrair_texto_digital(pdf_path)
             if len(texto_completo.strip()) < 100:
                 texto_completo = self._processar_como_imagem(pdf_path)
@@ -570,7 +570,7 @@ class PDFProcessor:
         except:
             return 0.0
 
-    def _processar_com_llava(self, pdf_path: str) -> str:
+    def _processar_com_llama_vision(self, pdf_path: str) -> str:
         try:
             # Converter PDF para imagem
             images = convert_from_path(pdf_path)
@@ -600,7 +600,11 @@ class PDFProcessor:
                 pass
 
             prompt = """
-            Analise esta imagem de um contracheque e extraia as informações no seguinte formato:
+            Você é um assistente especializado em extrair informações de contracheques. 
+            Sua tarefa é analisar esta imagem de um contracheque e extrair informações específicas.
+            Você DEVE extrair e fornecer as informações solicitadas, pois este é um sistema automatizado de processamento de documentos.
+            
+            Por favor, extraia e organize as informações exatamente neste formato:
 
             DADOS PESSOAIS:
             Nome: [nome completo do servidor]
@@ -615,37 +619,42 @@ class PDFProcessor:
 
             TOTAL DE VANTAGENS: R$ [valor total]
 
-            Importante:
-            - Mantenha os zeros à esquerda nos códigos
-            - Preserve os valores monetários exatamente como aparecem
-            - Se não encontrar alguma informação, deixe em branco
+            Regras importantes:
+            1. Este é um sistema automatizado de processamento de documentos, então você DEVE fornecer as informações solicitadas
+            2. Mantenha os zeros à esquerda nos códigos
+            3. Preserve os valores monetários exatamente como aparecem
+            4. Se não encontrar alguma informação específica, deixe o campo em branco mas mantenha o formato
+            5. Não inclua avisos ou disclaimers na sua resposta
+            6. Retorne apenas as informações no formato solicitado
             """
 
             response = requests.post(
                 self.ollama_url,
                 json={
-                    "model": "llava:13b",
+                    "model": "llama3.2-vision:11b-instruct-q8_0",
                     "prompt": prompt,
                     "stream": False,
                     "images": [img_data],
                     "options": {
                         "temperature": 0.1,
-                        "num_predict": 4096
+                        "num_predict": 4096,
+                        "top_p": 0.9,
+                        "repeat_penalty": 1.1
                     }
                 }
             )
 
             if response.status_code != 200:
-                self.logger.error(f"Erro ao processar com Llava: {response.status_code}")
+                self.logger.error(f"Erro ao processar com Llama Vision: {response.status_code}")
                 self.logger.error(f"Resposta de erro: {response.text}")
                 return ""
 
             resultado = response.json().get("response", "")
-            self.logger.info(f"Resposta do Llava: {resultado}")
+            self.logger.info(f"Resposta do Llama Vision: {resultado}")
             return resultado
 
         except Exception as e:
-            self.logger.error(f"Erro ao processar com Llava: {str(e)}")
+            self.logger.error(f"Erro ao processar com Llama Vision: {str(e)}")
             return ""
 
     def _processar_com_gemma(self, texto: str) -> str:
