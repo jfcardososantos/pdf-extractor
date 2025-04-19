@@ -102,6 +102,40 @@ class PDFProcessor:
         # Vetorizador para comparação de texto
         self.vectorizer = TfidfVectorizer()
         self.vectorizer.fit_transform(self.vantagens_chave)
+        
+        # Verificar disponibilidade dos modelos
+        try:
+            # Verificar Llava 13b
+            response = requests.post(
+                self.ollama_url,
+                json={
+                    "model": "llava:13b",
+                    "prompt": "test",
+                    "stream": False
+                }
+            )
+            if response.status_code == 404:
+                self.logger.error("Modelo llava:13b não encontrado. Por favor, instale usando 'ollama pull llava:13b'")
+                raise Exception("Modelo llava:13b não disponível")
+            
+            # Verificar Gemma 12b
+            response = requests.post(
+                self.ollama_url,
+                json={
+                    "model": "gemma3:12b",
+                    "prompt": "test",
+                    "stream": False
+                }
+            )
+            if response.status_code == 404:
+                self.logger.error("Modelo gemma3:12b não encontrado. Por favor, instale usando 'ollama pull gemma3:12b'")
+                raise Exception("Modelo gemma3:12b não disponível")
+            
+            self.logger.info("Modelos llava:13b e gemma3:12b disponíveis e prontos para uso")
+        except Exception as e:
+            self.logger.error(f"Erro ao verificar modelos: {str(e)}")
+            raise
+        
         self.logger.info("Inicialização do PDFProcessor concluída com sucesso")
 
     def process_pdf(self, pdf_path: str) -> ExtracaoResponse:
@@ -341,12 +375,12 @@ class PDFProcessor:
         - Ignore a coluna Período
         """
         
-        # Enviar para Gemma via Ollama
+        # Enviar para Llava via Ollama
         try:
             response = requests.post(
                 self.ollama_url,
                 json={
-                    "model": "llava:13b ",
+                    "model": "llava:13b",
                     "prompt": prompt,
                     "stream": False,
                     "images": [img_data]
