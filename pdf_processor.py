@@ -384,17 +384,27 @@ class PDFProcessor:
 
         # Preparar prompt para Llava
         prompt = """
-        Analise esta imagem de um contracheque e extraia as seguintes informações:
+        Analise esta imagem de um contracheque e extraia as informações no seguinte formato:
 
-        Na seção VANTAGENS, liste cada linha com:
-        - Código
-        - Descrição
-        - Percentual/Horas (se houver)
-        - Valor em R$
+        DADOS PESSOAIS:
+        Nome: [nome completo]
+        Matrícula: [número]
+        Mês/Ano Referência: [mês/ano]
 
-        Ignore a coluna Período.
+        VANTAGENS:
+        1. Código: [código]
+           Descrição: [descrição]
+           Percentual/Horas: [valor se houver]
+           Valor: R$ [valor]
+        2. Código: [próximo código]
+           ...
+
+        TOTAL DE VANTAGENS: R$ [valor total]
+
+        Por favor, mantenha este formato exato, preenchendo os campos entre colchetes com os valores encontrados.
         Mantenha os zeros à esquerda nos códigos.
-        Preserve os valores exatamente como aparecem.
+        Preserve os valores monetários exatamente como aparecem.
+        Se algum campo não for encontrado, mantenha o campo mas deixe vazio.
         """
         
         # Enviar para Llava
@@ -501,12 +511,27 @@ class PDFProcessor:
 
     def _usar_ollama_fallback(self, texto: str) -> str:
         prompt = f"""
-        Analise o seguinte texto de um contracheque e extraia:
-        - Nome completo do funcionário
-        - Número da matrícula
-        - Mês/ano de referência
-        - Lista de vantagens (código, descrição, percentual/horas se houver, valor)
-        - Total de vantagens
+        Analise o seguinte texto de um contracheque e extraia as informações no seguinte formato:
+
+        DADOS PESSOAIS:
+        Nome: [nome completo]
+        Matrícula: [número]
+        Mês/Ano Referência: [mês/ano]
+
+        VANTAGENS:
+        1. Código: [código]
+           Descrição: [descrição]
+           Percentual/Horas: [valor se houver]
+           Valor: R$ [valor]
+        2. Código: [próximo código]
+           ...
+
+        TOTAL DE VANTAGENS: R$ [valor total]
+
+        Por favor, mantenha este formato exato, preenchendo os campos entre colchetes com os valores encontrados.
+        Mantenha os zeros à esquerda nos códigos.
+        Preserve os valores monetários exatamente como aparecem.
+        Se algum campo não for encontrado, mantenha o campo mas deixe vazio.
 
         Texto do contracheque:
         {texto}
