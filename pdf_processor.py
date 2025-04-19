@@ -344,9 +344,13 @@ class PDFProcessor:
 
     def _analisar_com_llava(self, img_path: str) -> str:
         # Converter imagem para base64
-        with open(img_path, "rb") as img_file:
-            img_data = base64.b64encode(img_file.read()).decode('utf-8')
-        
+        try:
+            with open(img_path, "rb") as img_file:
+                img_data = base64.b64encode(img_file.read()).decode('utf-8')
+        except Exception as e:
+            self.logger.error(f"Erro ao ler imagem: {str(e)}")
+            return ""
+
         # Preparar prompt para Llava
         prompt = """
         Analise esta imagem de um contracheque. Na seção VANTAGENS, existem as seguintes colunas:
@@ -375,52 +379,82 @@ class PDFProcessor:
         - Ignore a coluna Período
         """
         
-        # Enviar para Llava via Ollama
+        # Preparar payload
+        payload = {
+            "model": "llava:13b",
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "temperature": 0.1,
+                "num_predict": 1024
+            }
+        }
+
+        # Adicionar imagem ao payload
+        if img_data:
+            payload["images"] = [img_data]
+
+        # Enviar para Llava via Ollama com mais detalhes de erro
         try:
+            self.logger.info("Enviando requisição para Llava...")
             response = requests.post(
                 self.ollama_url,
-                json={
-                    "model": "llava:13b",
-                    "prompt": prompt,
-                    "stream": False,
-                    "images": [img_data]
-                }
+                json=payload,
+                headers={'Content-Type': 'application/json'},
+                timeout=60  # Aumentar timeout para 60 segundos
             )
             
             if response.status_code != 200:
-                self.logger.error(f"Erro ao usar Llava: {response.status_code}")
+                self.logger.error(f"Erro ao usar Llava. Status: {response.status_code}")
+                self.logger.error(f"Resposta de erro: {response.text}")
                 return ""
-            
+
             # Extrair e limpar a resposta
-            resposta = response.json()["response"].strip()
-            
-            # Encontrar a lista JSON
-            inicio = resposta.find("[")
-            fim = resposta.rfind("]") + 1
-            
-            if inicio == -1 or fim == 0:
-                self.logger.error("Não foi possível encontrar uma lista JSON válida na resposta")
-                return ""
-            
-            # Extrair apenas a lista JSON
-            json_str = resposta[inicio:fim]
-            
-            # Limpar caracteres problemáticos
-            json_str = re.sub(r'[\n\r\t]', '', json_str)
-            json_str = re.sub(r',\s*]', ']', json_str)
-            json_str = re.sub(r',\s*}', '}', json_str)
-            
-            # Tentar fazer o parse do JSON
             try:
-                dados = json.loads(json_str)
-                return {"response": dados}
-            except json.JSONDecodeError as e:
-                self.logger.error(f"Erro ao decodificar JSON: {str(e)}")
-                self.logger.error(f"JSON problemático: {json_str}")
+                resposta = response.json()
+                if "response" not in resposta:
+                    self.logger.error(f"Resposta não contém campo 'response': {resposta}")
+                    return ""
+                
+                resposta_texto = resposta["response"].strip()
+                self.logger.info(f"Resposta bruta do Llava: {resposta_texto}")
+                
+                # Encontrar a lista JSON
+                inicio = resposta_texto.find("[")
+                fim = resposta_texto.rfind("]") + 1
+                
+                if inicio == -1 or fim == 0:
+                    self.logger.error("Não foi possível encontrar uma lista JSON válida na resposta")
+                    self.logger.error(f"Resposta completa: {resposta_texto}")
+                    return ""
+                
+                # Extrair apenas a lista JSON
+                json_str = resposta_texto[inicio:fim]
+                
+                # Limpar caracteres problemáticos
+                json_str = re.sub(r'[\n\r\t]', '', json_str)
+                json_str = re.sub(r',\s*]', ']', json_str)
+                json_str = re.sub(r',\s*}', '}', json_str)
+                
+                # Tentar fazer o parse do JSON
+                try:
+                    dados = json.loads(json_str)
+                    return {"response": dados}
+                except json.JSONDecodeError as e:
+                    self.logger.error(f"Erro ao decodificar JSON: {str(e)}")
+                    self.logger.error(f"JSON problemático: {json_str}")
+                    return ""
+                    
+            except Exception as e:
+                self.logger.error(f"Erro ao processar resposta: {str(e)}")
+                self.logger.error(f"Resposta completa: {response.text}")
                 return ""
                 
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"Erro na requisição HTTP: {str(e)}")
+            return ""
         except Exception as e:
-            self.logger.error(f"Erro ao usar Llava: {str(e)}")
+            self.logger.error(f"Erro inesperado ao usar Llava: {str(e)}")
             return ""
 
     def _processar_resposta_llava(self, resposta: str) -> List[Vantagem]:
