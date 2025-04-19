@@ -343,12 +343,37 @@ class PDFProcessor:
         return vantagens
 
     def _analisar_com_llava(self, img_path: str) -> str:
-        # Converter imagem para base64
+        # Converter PDF para imagem e processar
         try:
-            with open(img_path, "rb") as img_file:
+            # Converter PDF para imagem
+            images = convert_from_path(img_path)
+            if not images:
+                self.logger.error("Nenhuma imagem extraída do PDF")
+                return ""
+            
+            # Pegar primeira página
+            image = images[0]
+            
+            # Converter para RGB se necessário
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
+            
+            # Salvar temporariamente como PNG
+            temp_img_path = "temp_image.png"
+            image.save(temp_img_path, format='PNG')
+            
+            # Ler a imagem processada
+            with open(temp_img_path, "rb") as img_file:
                 img_data = base64.b64encode(img_file.read()).decode('utf-8')
+            
+            # Limpar arquivo temporário
+            try:
+                os.remove(temp_img_path)
+            except:
+                pass
+                
         except Exception as e:
-            self.logger.error(f"Erro ao ler imagem: {str(e)}")
+            self.logger.error(f"Erro ao processar imagem: {str(e)}")
             return ""
 
         # Preparar prompt para Llava
@@ -393,6 +418,7 @@ class PDFProcessor:
         # Adicionar imagem ao payload
         if img_data:
             payload["images"] = [img_data]
+            self.logger.info("Imagem processada e adicionada ao payload")
 
         # Enviar para Llava via Ollama com mais detalhes de erro
         try:
@@ -401,7 +427,7 @@ class PDFProcessor:
                 self.ollama_url,
                 json=payload,
                 headers={'Content-Type': 'application/json'},
-                timeout=60  # Aumentar timeout para 60 segundos
+                timeout=60
             )
             
             if response.status_code != 200:
