@@ -243,18 +243,10 @@ class PDFProcessor:
                     percentual = str(item.get('percentual', '')).strip()
                     valor_str = str(item.get('valor', '')).strip()
                     
-                    # Validar campos obrigatórios de forma mais flexível
-                    if not codigo and not descricao:
-                        print(f"Item sem código e descrição: {item}")
+                    # Validar campos obrigatórios
+                    if not codigo or not descricao:
+                        print(f"Item sem código ou descrição: {item}")
                         continue
-                    
-                    # Se não tiver código, usa a descrição como código
-                    if not codigo:
-                        codigo = descricao
-                    
-                    # Se não tiver descrição, usa o código como descrição
-                    if not descricao:
-                        descricao = codigo
                     
                     # Converter valor para float
                     valor = 0.0
@@ -289,26 +281,36 @@ class PDFProcessor:
         
         # Preparar prompt para Llava
         prompt = """
-        Analise esta imagem de um contracheque e extraia as seguintes informações:
-        1. Identifique todas as vantagens listadas
-        2. Para cada vantagem, identifique:
-           - O código
-           - A descrição
-           - O percentual ou duração (se houver)
-           - O valor monetário
-        3. Retorne APENAS um JSON válido com a seguinte estrutura:
+        Analise esta imagem de um contracheque. Na seção VANTAGENS, existem as seguintes colunas:
+        - Cód. (código da vantagem)
+        - Descrição (nome da vantagem)
+        - Perct./Horas (percentual ou horas)
+        - Período (ignorar esta coluna)
+        - Valor(R$) (valor monetário)
+
+        Para cada linha da tabela de vantagens:
+        1. Identifique o código na primeira coluna
+        2. Identifique a descrição na segunda coluna
+        3. Capture o percentual/horas na terceira coluna (se existir)
+        4. Capture o valor na última coluna
+
+        Retorne APENAS um JSON válido com a seguinte estrutura:
         {
             "response": [
                 {
-                    "codigo": "código da vantagem",
-                    "descricao": "descrição da vantagem",
-                    "percentual": "percentual ou duração (se houver)",
-                    "valor": "valor monetário"
+                    "codigo": "0002",
+                    "descricao": "Vencimento",
+                    "percentual": "30.00",
+                    "valor": "3052.41"
                 }
             ]
         }
-        4. Se a vantagem não tiver percentual, use uma string vazia ""
-        5. Não adicione nenhum texto além do JSON
+
+        Importante:
+        - Ignore completamente a coluna "Período"
+        - Mantenha os zeros à esquerda nos códigos
+        - Preserve os valores exatamente como aparecem
+        - Retorne apenas o JSON, sem texto adicional
         """
         
         # Enviar para Gemma via Ollama
