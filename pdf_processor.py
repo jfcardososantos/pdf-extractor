@@ -346,7 +346,7 @@ class PDFProcessor:
             response = requests.post(
                 self.ollama_url,
                 json={
-                    "model": "gemma3:12b",
+                    "model": "llava:13b ",
                     "prompt": prompt,
                     "stream": False,
                     "images": [img_data]
@@ -354,7 +354,7 @@ class PDFProcessor:
             )
             
             if response.status_code != 200:
-                self.logger.error(f"Erro ao usar Gemma3: {response.status_code}")
+                self.logger.error(f"Erro ao usar Llava: {response.status_code}")
                 return ""
             
             # Extrair e limpar a resposta
@@ -386,7 +386,7 @@ class PDFProcessor:
                 return ""
                 
         except Exception as e:
-            self.logger.error(f"Erro ao usar Gemma3: {str(e)}")
+            self.logger.error(f"Erro ao usar Llava: {str(e)}")
             return ""
 
     def _processar_resposta_llava(self, resposta: str) -> List[Vantagem]:
