@@ -140,22 +140,34 @@ class PDFProcessor:
 
     def process_pdf(self, pdf_path: str) -> dict:
         try:
-            # Processar com Llama Vision
-            resultado_llama = self._processar_com_llama_vision(pdf_path)
-            if resultado_llama and "erro" not in resultado_llama.lower():
-                # Se Llama retornou algo útil, usa o resultado
-                texto_completo = self._extrair_texto_digital(pdf_path)
-                if len(texto_completo.strip()) < 100:
-                    texto_completo = self._processar_como_imagem(pdf_path)
-                return {"response": resultado_llama, "texto_extraido": texto_completo}
+            # Converter PDF para imagem
+            images = convert_from_path(pdf_path, dpi=300)  # Aumentando DPI base
+            if not images:
+                self.logger.error("Nenhuma imagem extraída do PDF")
+                return {"response": "", "texto_extraido": ""}
             
-            # Se Llama falhou, tenta com Gemma usando o texto
+            # Pegar primeira página
+            image = images[0]
+            
+            # Converter para RGB se necessário
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
+
+            # Processar dados pessoais
+            dados_pessoais = self._extrair_dados_pessoais(image)
+            
+            # Processar seção de vantagens com alta qualidade
+            vantagens = self._processar_vantagens(image)
+            
+            # Combinar resultados
+            resultado = f"{dados_pessoais}\n\n{vantagens}"
+            
+            # Extrair texto para referência
             texto_completo = self._extrair_texto_digital(pdf_path)
             if len(texto_completo.strip()) < 100:
                 texto_completo = self._processar_como_imagem(pdf_path)
             
-            resultado_gemma = self._processar_com_gemma(texto_completo)
-            return {"response": resultado_gemma, "texto_extraido": texto_completo}
+            return {"response": resultado, "texto_extraido": texto_completo}
                 
         except Exception as e:
             self.logger.error(f"Erro ao processar PDF: {str(e)}")
@@ -570,49 +582,81 @@ class PDFProcessor:
         except:
             return 0.0
 
-    def _processar_com_llama_vision(self, pdf_path: str) -> str:
+    def _extrair_dados_pessoais(self, image) -> str:
+        # Salvar temporariamente como PNG
+        temp_img_path = "temp_image_dados.png"
+        image.save(temp_img_path, format='PNG')
+        
         try:
-            # Converter PDF para imagem
-            images = convert_from_path(pdf_path)
-            if not images:
-                self.logger.error("Nenhuma imagem extraída do PDF")
-                return ""
-            
-            # Pegar primeira página
-            image = images[0]
-            
-            # Converter para RGB se necessário
-            if image.mode != 'RGB':
-                image = image.convert('RGB')
-            
-            # Salvar temporariamente como PNG
-            temp_img_path = "temp_image.png"
-            image.save(temp_img_path, format='PNG')
-            
             # Ler a imagem processada
             with open(temp_img_path, "rb") as img_file:
                 img_data = base64.b64encode(img_file.read()).decode('utf-8')
             
-            # Limpar arquivo temporário
-            try:
+            prompt = """
+            Extraia apenas os seguintes dados do cabeçalho do contracheque:
+
+            DADOS PESSOAIS:
+            Nome: [nome completo do servidor]
+            Matrícula: [número da matrícula]
+            Mês/Ano Referência: [mês/ano]
+            """
+
+            response = requests.post(
+                self.ollama_url,
+                json={
+                    "model": "llama3.2-vision:11b-instruct-q8_0",
+                    "prompt": prompt,
+                    "stream": False,
+                    "images": [img_data],
+                    "options": {
+                        "temperature": 0.1,
+                        "num_predict": 1024
+                    }
+                }
+            )
+
+            os.remove(temp_img_path)
+            return response.json().get("response", "")
+            
+        except Exception as e:
+            self.logger.error(f"Erro ao extrair dados pessoais: {str(e)}")
+            if os.path.exists(temp_img_path):
                 os.remove(temp_img_path)
-            except:
-                pass
+            return ""
+
+    def _processar_vantagens(self, image) -> str:
+        try:
+            # Aumentar qualidade especificamente para a seção de vantagens
+            # Primeiro, vamos criar uma cópia da imagem com alta resolução
+            width, height = image.size
+            image_hq = image.resize((width*2, height*2), Image.Resampling.LANCZOS)
+            
+            # Melhorar contraste para a seção de vantagens
+            from PIL import ImageEnhance
+            enhancer = ImageEnhance.Contrast(image_hq)
+            image_hq = enhancer.enhance(1.2)  # Aumentar contraste em 20%
+            
+            # Salvar temporariamente como PNG em alta qualidade
+            temp_img_path = "temp_image_vantagens.png"
+            image_hq.save(temp_img_path, format='PNG', quality=100)
+            
+            # Ler a imagem processada
+            with open(temp_img_path, "rb") as img_file:
+                img_data = base64.b64encode(img_file.read()).decode('utf-8')
 
             prompt = """
-            Analise esta tabela de VANTAGENS de um contracheque. A tabela tem exatamente estas colunas em ordem:
+            Analise APENAS a tabela de VANTAGENS deste contracheque. A tabela tem estas colunas:
 
             | Cód. | Descrição | Perct./Horas | Período | Valor(R$) |
 
-            Regras de extração:
-            1. Código: Sempre existe e mantém zeros à esquerda (ex: 0022P)
-            2. Descrição: Sempre existe (ex: Vencimento Inc)
-            3. Perct./Horas: Pode estar vazio ou ter um valor (ex: 30.00)
-            4. Período: Pode estar vazio ou ter um valor (ex: 02.2021)
-            5. Valor(R$): SEMPRE tem um valor monetário (ex: 2.693,71)
+            ATENÇÃO ESPECIAL:
+            1. Foque APENAS na seção de VANTAGENS
+            2. Cada linha SEMPRE tem um valor monetário na última coluna (Valor(R$))
+            3. NUNCA retorne valor R$ 0,00 - se há uma linha na tabela, ela tem um valor real
+            4. Perct./Horas e Período podem estar vazios - neste caso, deixe em branco
+            5. Extraia EXATAMENTE os valores como estão na imagem
 
-            Extraia cada linha da tabela exatamente neste formato:
-
+            Exemplo de como deve ser a extração:
             VANTAGENS:
             1. Código: 0022P
                Descrição: Vencimento Inc
@@ -620,19 +664,19 @@ class PDFProcessor:
                Período: 02.2021
                Valor: R$ 2.693,71
 
-            2. Código: [próximo código]
-               ...
+            2. Código: 0251
+               Descrição: Grat Atividade Fiscal Inc
+               Percentual/Horas: 98.74
+               Período: 02.2021
+               Valor: R$ 10.639,08
 
             TOTAL DE VANTAGENS: R$ [soma exata de todos os valores]
 
-            IMPORTANTE:
-            - A coluna Valor(R$) é a ÚLTIMA coluna da tabela
-            - Todo valor em R$ DEVE ter centavos (vírgula e 2 dígitos)
-            - Mantenha EXATAMENTE a formatação dos números como está na imagem
-            - Não pule nenhuma linha da tabela
-            - Não invente valores
-            - Se Perct./Horas ou Período estiverem vazios, deixe em branco (não use 0,00)
-            - O valor em R$ NUNCA está vazio e SEMPRE deve ser extraído
+            REGRAS CRÍTICAS:
+            - NUNCA use R$ 0,00 como valor
+            - Mantenha EXATAMENTE a formatação dos números (pontos e vírgulas)
+            - Extraia TODOS os valores monetários da última coluna
+            - Se uma linha existe na tabela, ela TEM um valor monetário real
             """
 
             response = requests.post(
@@ -651,78 +695,11 @@ class PDFProcessor:
                 }
             )
 
-            if response.status_code != 200:
-                self.logger.error(f"Erro ao processar com Llama Vision: {response.status_code}")
-                self.logger.error(f"Resposta de erro: {response.text}")
-                return ""
-
-            resultado = response.json().get("response", "")
-            self.logger.info(f"Resposta do Llama Vision: {resultado}")
-            return resultado
-
-        except Exception as e:
-            self.logger.error(f"Erro ao processar com Llama Vision: {str(e)}")
-            return ""
-
-    def _processar_com_gemma(self, texto: str) -> str:
-        prompt = f"""
-        Você é um especialista em extrair informações de contracheques. Analise este texto extraído de um contracheque e identifique as informações solicitadas.
-
-        Regras importantes:
-        1. Procure por padrões como "NOME:", "MATRÍCULA:", etc.
-        2. Na seção de vantagens, procure por códigos numéricos seguidos de descrições e valores
-        3. Valores monetários geralmente aparecem no formato "R$ X.XXX,XX" ou apenas números com vírgula
-        4. Mantenha os zeros à esquerda nos códigos
-        5. Se não encontrar alguma informação, deixe em branco
-        6. Não invente ou suponha informações
-        7. Preste muita atenção aos detalhes e números
-
-        Por favor, extraia e organize as informações no seguinte formato:
-
-        DADOS PESSOAIS:
-        Nome: [nome completo do servidor]
-        Matrícula: [número da matrícula]
-        Mês/Ano Referência: [mês/ano]
-
-        VANTAGENS:
-        [Liste cada vantagem encontrada no formato:]
-        1. Código: [código numérico]
-           Descrição: [nome/descrição da vantagem]
-           Valor: R$ [valor monetário]
-
-        TOTAL DE VANTAGENS: R$ [valor total]
-
-        Texto do contracheque:
-        {texto}
-        """
-
-        try:
-            response = requests.post(
-                self.ollama_url,
-                json={
-                    "model": "gemma3:12b",
-                    "prompt": prompt,
-                    "stream": False,
-                    "options": {
-                        "temperature": 0.2,
-                        "num_predict": 4096,
-                        "top_k": 50,
-                        "top_p": 0.9,
-                        "context_window": 8192,
-                        "stop": ["</s>", "Human:", "Assistant:"]
-                    }
-                }
-            )
-
-            if response.status_code != 200:
-                self.logger.error(f"Erro ao processar com Gemma: {response.status_code}")
-                self.logger.error(f"Resposta de erro: {response.text}")
-                return ""
-
-            resultado = response.json().get("response", "")
-            self.logger.info(f"Resposta do Gemma: {resultado}")
-            return resultado
+            os.remove(temp_img_path)
+            return response.json().get("response", "")
             
         except Exception as e:
-            self.logger.error(f"Erro ao processar com Gemma: {str(e)}")
+            self.logger.error(f"Erro ao processar vantagens: {str(e)}")
+            if os.path.exists(temp_img_path):
+                os.remove(temp_img_path)
             return "" 
