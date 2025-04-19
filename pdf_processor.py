@@ -140,42 +140,22 @@ class PDFProcessor:
 
     def process_pdf(self, pdf_path: str) -> dict:
         try:
-            # Converter PDF para imagem
-            images = convert_from_path(pdf_path)
-            if not images:
-                self.logger.error("Nenhuma imagem extraída do PDF")
-                return {"response": "", "texto_extraido": ""}
+            # Primeiro tenta com Llava (processamento de imagem)
+            resultado_llava = self._processar_com_llava(pdf_path)
+            if resultado_llava and "erro" not in resultado_llava.lower():
+                # Se Llava retornou algo útil, usa o resultado
+                texto_completo = self._extrair_texto_digital(pdf_path)
+                if len(texto_completo.strip()) < 100:
+                    texto_completo = self._processar_como_imagem(pdf_path)
+                return {"response": resultado_llava, "texto_extraido": texto_completo}
             
-            # Pegar primeira página
-            image = images[0]
-            
-            # Converter para RGB se necessário
-            if image.mode != 'RGB':
-                image = image.convert('RGB')
-            
-            # Salvar temporariamente como PNG
-            temp_img_path = "temp_image.png"
-            image.save(temp_img_path, format='PNG')
-            
-            # Ler a imagem processada
-            with open(temp_img_path, "rb") as img_file:
-                img_data = base64.b64encode(img_file.read()).decode('utf-8')
-            
-            # Limpar arquivo temporário
-            try:
-                os.remove(temp_img_path)
-            except:
-                pass
-
-            # Processar com Gemma
-            resultado = self._processar_com_gemma(img_data)
-            
-            # Extrair texto para referência
+            # Se Llava falhou, tenta com Gemma usando o texto
             texto_completo = self._extrair_texto_digital(pdf_path)
             if len(texto_completo.strip()) < 100:
                 texto_completo = self._processar_como_imagem(pdf_path)
             
-            return {"response": resultado, "texto_extraido": texto_completo}
+            resultado_gemma = self._processar_com_gemma(texto_completo)
+            return {"response": resultado_gemma, "texto_extraido": texto_completo}
                 
         except Exception as e:
             self.logger.error(f"Erro ao processar PDF: {str(e)}")
@@ -590,9 +570,87 @@ class PDFProcessor:
         except:
             return 0.0
 
-    def _processar_com_gemma(self, img_data: str) -> str:
-        prompt = """
-        Você é um especialista em extrair informações de contracheques. Analise esta imagem de um contracheque e identifique as informações solicitadas.
+    def _processar_com_llava(self, pdf_path: str) -> str:
+        try:
+            # Converter PDF para imagem
+            images = convert_from_path(pdf_path)
+            if not images:
+                self.logger.error("Nenhuma imagem extraída do PDF")
+                return ""
+            
+            # Pegar primeira página
+            image = images[0]
+            
+            # Converter para RGB se necessário
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
+            
+            # Salvar temporariamente como PNG
+            temp_img_path = "temp_image.png"
+            image.save(temp_img_path, format='PNG')
+            
+            # Ler a imagem processada
+            with open(temp_img_path, "rb") as img_file:
+                img_data = base64.b64encode(img_file.read()).decode('utf-8')
+            
+            # Limpar arquivo temporário
+            try:
+                os.remove(temp_img_path)
+            except:
+                pass
+
+            prompt = """
+            Analise esta imagem de um contracheque e extraia as informações no seguinte formato:
+
+            DADOS PESSOAIS:
+            Nome: [nome completo do servidor]
+            Matrícula: [número da matrícula]
+            Mês/Ano Referência: [mês/ano]
+
+            VANTAGENS:
+            [Liste cada vantagem encontrada no formato:]
+            1. Código: [código numérico]
+               Descrição: [nome/descrição da vantagem]
+               Valor: R$ [valor monetário]
+
+            TOTAL DE VANTAGENS: R$ [valor total]
+
+            Importante:
+            - Mantenha os zeros à esquerda nos códigos
+            - Preserve os valores monetários exatamente como aparecem
+            - Se não encontrar alguma informação, deixe em branco
+            """
+
+            response = requests.post(
+                self.ollama_url,
+                json={
+                    "model": "llava:13b",
+                    "prompt": prompt,
+                    "stream": False,
+                    "images": [img_data],
+                    "options": {
+                        "temperature": 0.1,
+                        "num_predict": 4096
+                    }
+                }
+            )
+
+            if response.status_code != 200:
+                self.logger.error(f"Erro ao processar com Llava: {response.status_code}")
+                self.logger.error(f"Resposta de erro: {response.text}")
+                return ""
+
+            resultado = response.json().get("response", "")
+            self.logger.info(f"Resposta do Llava: {resultado}")
+            return resultado
+
+        except Exception as e:
+            self.logger.error(f"Erro ao processar com Llava: {str(e)}")
+            return ""
+
+    def _processar_com_gemma(self, texto: str) -> str:
+        prompt = f"""
+        Você é um especialista em extrair informações de contracheques. Analise este texto extraído de um contracheque e identifique as informações solicitadas.
 
         Regras importantes:
         1. Procure por padrões como "NOME:", "MATRÍCULA:", etc.
@@ -602,14 +660,13 @@ class PDFProcessor:
         5. Se não encontrar alguma informação, deixe em branco
         6. Não invente ou suponha informações
         7. Preste muita atenção aos detalhes e números
-        8. Verifique cada linha cuidadosamente
 
         Por favor, extraia e organize as informações no seguinte formato:
 
         DADOS PESSOAIS:
-        Nome: [extrair nome completo do servidor]
-        Matrícula: [extrair número da matrícula]
-        Mês/Ano Referência: [extrair mês e ano]
+        Nome: [nome completo do servidor]
+        Matrícula: [número da matrícula]
+        Mês/Ano Referência: [mês/ano]
 
         VANTAGENS:
         [Liste cada vantagem encontrada no formato:]
@@ -617,9 +674,10 @@ class PDFProcessor:
            Descrição: [nome/descrição da vantagem]
            Valor: R$ [valor monetário]
 
-        TOTAL DE VANTAGENS: R$ [valor total das vantagens]
+        TOTAL DE VANTAGENS: R$ [valor total]
 
-        Importante: Analise a imagem com muita atenção antes de responder. Verifique cada seção do contracheque cuidadosamente.
+        Texto do contracheque:
+        {texto}
         """
 
         try:
@@ -629,7 +687,6 @@ class PDFProcessor:
                     "model": "gemma3:12b",
                     "prompt": prompt,
                     "stream": False,
-                    "images": [img_data],
                     "options": {
                         "temperature": 0.2,
                         "num_predict": 4096,
