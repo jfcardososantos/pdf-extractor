@@ -627,53 +627,18 @@ class PDFProcessor:
     def _processar_vantagens(self, image) -> str:
         try:
             # Aumentar qualidade especificamente para a seção de vantagens
-            # Primeiro, vamos criar uma cópia da imagem com resolução muito alta
+            # Primeiro, vamos criar uma cópia da imagem com alta resolução
             width, height = image.size
-            image_hq = image.resize((width*3, height*3), Image.Resampling.LANCZOS)  # Aumentado para 3x
+            image_hq = image.resize((width*2, height*2), Image.Resampling.LANCZOS)
             
-            # Melhorar contraste e nitidez
+            # Melhorar contraste para a seção de vantagens
             from PIL import ImageEnhance
-            
-            # Aumentar contraste
             enhancer = ImageEnhance.Contrast(image_hq)
-            image_hq = enhancer.enhance(1.3)  # Aumentado para 30%
+            image_hq = enhancer.enhance(1.2)  # Aumentar contraste em 20%
             
-            # Aumentar nitidez
-            sharpener = ImageEnhance.Sharpness(image_hq)
-            image_hq = sharpener.enhance(1.5)  # Adicionar nitidez
-            
-            # Aumentar brilho levemente
-            brightener = ImageEnhance.Brightness(image_hq)
-            image_hq = brightener.enhance(1.1)  # Aumentar brilho em 10%
-            
-            # Converter para array numpy para processamento adicional
-            img_array = np.array(image_hq)
-            
-            # Aplicar threshold adaptativo para melhorar a definição dos números
-            if len(img_array.shape) == 3:  # Se for RGB
-                img_gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
-            else:
-                img_gray = img_array
-            
-            # Aplicar threshold adaptativo
-            binary = cv2.adaptiveThreshold(
-                img_gray,
-                255,
-                cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                cv2.THRESH_BINARY,
-                21,  # Tamanho do bloco
-                10   # Constante de subtração
-            )
-            
-            # Aplicar leve desfoque para remover ruído, mantendo a definição dos números
-            denoised = cv2.fastNlMeansDenoising(binary, None, 10, 7, 21)
-            
-            # Converter de volta para PIL
-            image_hq = Image.fromarray(denoised)
-            
-            # Salvar temporariamente como PNG em qualidade máxima
+            # Salvar temporariamente como PNG em alta qualidade
             temp_img_path = "temp_image_vantagens.png"
-            image_hq.save(temp_img_path, format='PNG', quality=100, optimize=False)
+            image_hq.save(temp_img_path, format='PNG', quality=100)
             
             # Ler a imagem processada
             with open(temp_img_path, "rb") as img_file:
@@ -690,8 +655,6 @@ class PDFProcessor:
             3. NUNCA retorne valor R$ 0,00 - se há uma linha na tabela, ela tem um valor real
             4. Perct./Horas e Período podem estar vazios - neste caso, deixe em branco
             5. Extraia EXATAMENTE os valores como estão na imagem
-            6. ATENÇÃO ESPECIAL AOS NÚMEROS: verifique cuidadosamente cada dígito
-            7. Diferencie bem entre números similares (1 e 2, 3 e 8, 5 e 6, etc.)
 
             Exemplo de como deve ser a extração:
             VANTAGENS:
@@ -714,8 +677,6 @@ class PDFProcessor:
             - Mantenha EXATAMENTE a formatação dos números (pontos e vírgulas)
             - Extraia TODOS os valores monetários da última coluna
             - Se uma linha existe na tabela, ela TEM um valor monetário real
-            - VERIFIQUE DUAS VEZES cada número antes de retornar
-            - Preste atenção especial aos dígitos que podem ser confundidos (1/2, 3/8, 5/6)
             """
 
             response = requests.post(
@@ -728,9 +689,8 @@ class PDFProcessor:
                     "options": {
                         "temperature": 0.1,
                         "num_predict": 4096,
-                        "top_p": 0.95,  # Aumentado levemente para melhor precisão
-                        "repeat_penalty": 1.2,  # Aumentado para evitar repetições
-                        "num_ctx": 8192  # Aumentado contexto
+                        "top_p": 0.9,
+                        "repeat_penalty": 1.1
                     }
                 }
             )
