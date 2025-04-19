@@ -235,39 +235,17 @@ class PDFProcessor:
         # Extrair vantagens usando Llava
         response = self._analisar_com_llava(pdf_path)
         if response and 'response' in response:
-            vantagens_texto = response['response']
-            
-            # Processar cada linha de vantagem
-            for linha in vantagens_texto.split('\n'):
-                if not linha.strip():
-                    continue
-                    
+            for item in response['response']:
                 try:
-                    # Extrair partes da linha
-                    partes = [p.strip() for p in linha.split('|')]
-                    
-                    # Verificar se tem 3 ou 4 partes
-                    if len(partes) not in [3, 4]:
-                        print(f"Formato inválido na linha: {linha}")
-                        continue
-                    
-                    # Extrair campos baseado no número de partes
-                    if len(partes) == 3:
-                        # Sem percentual: código, descrição, valor
-                        codigo = partes[0]
-                        descricao = partes[1]
-                        valor_str = partes[2]
-                        percentual = ""
-                    else:
-                        # Com percentual: código, descrição, percentual, valor
-                        codigo = partes[0]
-                        descricao = partes[1]
-                        percentual = partes[2]
-                        valor_str = partes[3]
+                    # Extrair campos
+                    codigo = item.get('codigo', '').strip()
+                    descricao = item.get('descricao', '').strip()
+                    percentual = item.get('percentual', '').strip()
+                    valor_str = item.get('valor', '').strip()
                     
                     # Validar campos obrigatórios
                     if not codigo or not descricao or not valor_str:
-                        print(f"Campos obrigatórios ausentes na linha: {linha}")
+                        print(f"Campos obrigatórios ausentes no item: {item}")
                         continue
                     
                     # Converter valor para float
@@ -288,7 +266,7 @@ class PDFProcessor:
                     vantagens.append(vantagem)
                     print(f"Vantagem extraída: {vantagem}")
                 except Exception as e:
-                    print(f"Erro ao processar linha: {linha}")
+                    print(f"Erro ao processar item: {item}")
                     print(f"Erro: {str(e)}")
                     continue
                     
@@ -308,13 +286,19 @@ class PDFProcessor:
            - A descrição
            - O percentual ou duração (se houver)
            - O valor monetário
-        3. Retorne cada vantagem em uma linha separada, com os campos separados por |
-        4. Se a vantagem não tiver percentual, pule esse campo
-        5. Exemplo de formato:
-           CODIGO|DESCRICAO|PERCENTUAL|VALOR
-           ou
-           CODIGO|DESCRICAO|VALOR
-        6. Retorne apenas as vantagens encontradas, sem texto adicional
+        3. Retorne APENAS um JSON válido com a seguinte estrutura:
+        {
+            "response": [
+                {
+                    "codigo": "código da vantagem",
+                    "descricao": "descrição da vantagem",
+                    "percentual": "percentual ou duração (se houver)",
+                    "valor": "valor monetário"
+                }
+            ]
+        }
+        4. Se a vantagem não tiver percentual, use uma string vazia ""
+        5. Não adicione nenhum texto além do JSON
         """
         
         # Enviar para Gemma via Ollama
@@ -332,8 +316,30 @@ class PDFProcessor:
             if response.status_code != 200:
                 print(f"Erro ao usar Gemma3: {response.status_code}")
                 return ""
+            
+            # Tentar extrair o JSON da resposta
+            resposta = response.json()["response"]
+            
+            # Limpar a resposta para garantir que é um JSON válido
+            resposta = resposta.strip()
+            inicio_json = resposta.find("{")
+            fim_json = resposta.rfind("}") + 1
+            
+            if inicio_json == -1 or fim_json == 0:
+                print("Não foi possível encontrar um JSON válido na resposta")
+                return ""
+            
+            json_str = resposta[inicio_json:fim_json]
+            
+            # Tentar fazer o parse do JSON
+            try:
+                dados = json.loads(json_str)
+                return dados
+            except json.JSONDecodeError as e:
+                print(f"Erro ao decodificar JSON: {str(e)}")
+                print(f"JSON problemático: {json_str}")
+                return ""
                 
-            return response.json()["response"]
         except Exception as e:
             print(f"Erro ao usar Gemma3: {str(e)}")
             return ""
