@@ -243,30 +243,50 @@ class PDFProcessor:
                     continue
                     
                 try:
-                    # Extrair código, descrição e valor
-                    partes = linha.split('|')
-                    if len(partes) >= 3:
-                        codigo = partes[0].strip()
-                        descricao = partes[1].strip()
-                        valor_str = partes[2].strip()
-                        
-                        # Converter valor para float
-                        valor = 0.0
-                        try:
-                            valor = float(valor_str.replace('R$', '').replace('.', '').replace(',', '.'))
-                        except ValueError:
-                            print(f"Erro ao converter valor: {valor_str}")
-                            continue
-                            
-                        # Criar objeto Vantagem
-                        vantagem = Vantagem(
-                            codigo=codigo,
-                            descricao=descricao,
-                            percentual_duracao="",  # Não usado no momento
-                            valor=valor
-                        )
-                        vantagens.append(vantagem)
-                        print(f"Vantagem extraída: {vantagem}")
+                    # Extrair partes da linha
+                    partes = [p.strip() for p in linha.split('|')]
+                    
+                    # Verificar se tem 3 ou 4 partes
+                    if len(partes) not in [3, 4]:
+                        print(f"Formato inválido na linha: {linha}")
+                        continue
+                    
+                    # Extrair campos baseado no número de partes
+                    if len(partes) == 3:
+                        # Sem percentual: código, descrição, valor
+                        codigo = partes[0]
+                        descricao = partes[1]
+                        valor_str = partes[2]
+                        percentual = ""
+                    else:
+                        # Com percentual: código, descrição, percentual, valor
+                        codigo = partes[0]
+                        descricao = partes[1]
+                        percentual = partes[2]
+                        valor_str = partes[3]
+                    
+                    # Validar campos obrigatórios
+                    if not codigo or not descricao or not valor_str:
+                        print(f"Campos obrigatórios ausentes na linha: {linha}")
+                        continue
+                    
+                    # Converter valor para float
+                    valor = 0.0
+                    try:
+                        valor = float(valor_str.replace('R$', '').replace('.', '').replace(',', '.'))
+                    except ValueError:
+                        print(f"Erro ao converter valor: {valor_str}")
+                        continue
+                    
+                    # Criar objeto Vantagem
+                    vantagem = Vantagem(
+                        codigo=codigo,
+                        descricao=descricao,
+                        percentual_duracao=percentual,
+                        valor=valor
+                    )
+                    vantagens.append(vantagem)
+                    print(f"Vantagem extraída: {vantagem}")
                 except Exception as e:
                     print(f"Erro ao processar linha: {linha}")
                     print(f"Erro: {str(e)}")
@@ -282,13 +302,19 @@ class PDFProcessor:
         # Preparar prompt para Llava
         prompt = """
         Analise esta imagem de um contracheque e extraia as seguintes informações:
-        1. Identifique todas as vantagens listadas (VENCIMENTO, GRAT.A.FIS, GRAT.A.FIS JUD, AD.T.SERV, CET-H.ESP, PDF, AD.NOT.INCORP, DIF SALARIO/RRA, TOTAL INFORMADO)
+        1. Identifique todas as vantagens listadas
         2. Para cada vantagem, identifique:
-           - O código/descrição
+           - O código
+           - A descrição
            - O percentual ou duração (se houver)
            - O valor monetário
-        3. Diferencie claramente entre percentual/duração e valor monetário
-        4. Retorne apenas as vantagens encontradas, sem texto adicional
+        3. Retorne cada vantagem em uma linha separada, com os campos separados por |
+        4. Se a vantagem não tiver percentual, pule esse campo
+        5. Exemplo de formato:
+           CODIGO|DESCRICAO|PERCENTUAL|VALOR
+           ou
+           CODIGO|DESCRICAO|VALOR
+        6. Retorne apenas as vantagens encontradas, sem texto adicional
         """
         
         # Enviar para Gemma via Ollama
@@ -401,11 +427,11 @@ class PDFProcessor:
                 {{
                     "codigo": "código da vantagem",
                     "descricao": "descrição da vantagem",
-                    "percentual_duracao": "percentual ou duração (se houver)",
+                    "percentual_duracao": "",
                     "valor": 0.0
                 }}
             ],
-            "total_vantagens": 0.0,
+            "total_vantagens": 0.0
         }}
 
         Texto do contracheque:
@@ -457,6 +483,13 @@ class PDFProcessor:
             for campo in campos_obrigatorios:
                 if campo not in dados:
                     raise Exception(f"Campo obrigatório '{campo}' não encontrado na resposta")
+            
+            # Validar vantagens
+            for v in dados["vantagens"]:
+                if not v.get("codigo") or not v.get("descricao"):
+                    raise Exception("Vantagem sem código ou descrição")
+                if v.get("valor") is None:
+                    v["valor"] = 0.0
             
             return ExtracaoResponse(**dados)
             
