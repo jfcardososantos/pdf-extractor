@@ -20,6 +20,8 @@ import magic
 import base64
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+import warnings
+import logging
 
 class Vantagem(BaseModel):
     codigo: str
@@ -36,24 +38,57 @@ class ExtracaoResponse(BaseModel):
 
 class PDFProcessor:
     def __init__(self):
+        # Configurar logging
+        logging.basicConfig(level=logging.INFO)
+        self.logger = logging.getLogger(__name__)
+        
+        # Suprimir avisos específicos
+        warnings.filterwarnings('ignore', category=UserWarning, module='torch.nn.modules.conv')
+        warnings.filterwarnings('ignore', message='Some weights of BertForTokenClassification')
+        
         self.ollama_url = "http://192.168.15.222:11434/api/generate"
         self.vantagens_chave = [
             "VENCIMENTO", "GRAT.A.FIS", "GRAT.A.FIS JUD", "AD.T.SERV",
             "CET-H.ESP", "PDF", "AD.NOT.INCORP", "DIF SALARIO/RRA"
         ]
         
-        # Verificar se CUDA está disponível
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        print(f"Usando dispositivo: {self.device}")
+        # Inicializar dispositivo CUDA com tratamento de erro
+        try:
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            self.logger.info(f"Usando dispositivo: {self.device}")
+        except Exception as e:
+            self.logger.warning(f"Erro ao configurar CUDA, usando CPU: {str(e)}")
+            self.device = torch.device("cpu")
         
-        # Inicializar EasyOCR com GPU
-        self.reader = easyocr.Reader(['pt'], gpu=True)
+        # Inicializar EasyOCR com tratamento de erro
+        try:
+            self.reader = easyocr.Reader(['pt'], gpu=torch.cuda.is_available())
+            self.logger.info("EasyOCR inicializado com sucesso")
+        except Exception as e:
+            self.logger.error(f"Erro ao inicializar EasyOCR: {str(e)}")
+            raise
         
-        # Carregar modelo spaCy para português
-        self.nlp = spacy.load("pt_core_news_lg")
+        # Carregar modelo spaCy
+        try:
+            self.nlp = spacy.load("pt_core_news_lg")
+            self.logger.info("Modelo spaCy carregado com sucesso")
+        except Exception as e:
+            self.logger.error(f"Erro ao carregar modelo spaCy: {str(e)}")
+            raise
         
-        # Inicializar pipeline de NER
-        self.ner_pipeline = pipeline("ner", model="neuralmind/bert-base-portuguese-cased", device=0 if torch.cuda.is_available() else -1)
+        # Inicializar pipeline de NER com tratamento de erro
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                self.ner_pipeline = pipeline(
+                    "ner",
+                    model="neuralmind/bert-base-portuguese-cased",
+                    device=0 if torch.cuda.is_available() else -1
+                )
+            self.logger.info("Pipeline NER inicializado com sucesso")
+        except Exception as e:
+            self.logger.error(f"Erro ao inicializar pipeline NER: {str(e)}")
+            raise
         
         # Padrões de regex para extração
         self.patterns = {
@@ -66,9 +101,8 @@ class PDFProcessor:
         
         # Vetorizador para comparação de texto
         self.vectorizer = TfidfVectorizer()
-        
-        # Treinar vetorizador com as vantagens
         self.vectorizer.fit_transform(self.vantagens_chave)
+        self.logger.info("Inicialização do PDFProcessor concluída com sucesso")
 
     def process_pdf(self, pdf_path: str) -> ExtracaoResponse:
         # Verificar tipo de arquivo
@@ -245,7 +279,7 @@ class PDFProcessor:
                     
                     # Validar campos obrigatórios
                     if not codigo or not descricao:
-                        print(f"Item sem código ou descrição: {item}")
+                        self.logger.warning(f"Item sem código ou descrição: {item}")
                         continue
                     
                     # Converter valor para float
@@ -255,7 +289,7 @@ class PDFProcessor:
                         valor_str = valor_str.replace('R$', '').replace(' ', '').strip()
                         valor = float(valor_str.replace('.', '').replace(',', '.'))
                     except ValueError:
-                        print(f"Erro ao converter valor: {valor_str}")
+                        self.logger.warning(f"Erro ao converter valor: {valor_str}")
                         continue
                     
                     # Criar objeto Vantagem
@@ -266,10 +300,10 @@ class PDFProcessor:
                         valor=valor
                     )
                     vantagens.append(vantagem)
-                    print(f"Vantagem extraída: {vantagem}")
+                    self.logger.info(f"Vantagem extraída: {vantagem}")
                 except Exception as e:
-                    print(f"Erro ao processar item: {item}")
-                    print(f"Erro: {str(e)}")
+                    self.logger.error(f"Erro ao processar item: {item}")
+                    self.logger.error(f"Erro: {str(e)}")
                     continue
                     
         return vantagens
@@ -288,29 +322,23 @@ class PDFProcessor:
         - Período (ignorar esta coluna)
         - Valor(R$) (valor monetário)
 
-        Para cada linha da tabela de vantagens:
-        1. Identifique o código na primeira coluna
-        2. Identifique a descrição na segunda coluna
-        3. Capture o percentual/horas na terceira coluna (se existir)
-        4. Capture o valor na última coluna
+        Para cada linha da tabela de vantagens, retorne um objeto JSON com:
+        - codigo: o código da vantagem (primeira coluna)
+        - descricao: a descrição da vantagem (segunda coluna)
+        - percentual: o percentual/horas (terceira coluna)
+        - valor: o valor em R$ (última coluna)
 
-        Retorne APENAS um JSON válido com a seguinte estrutura:
-        {
-            "response": [
-                {
-                    "codigo": "0002",
-                    "descricao": "Vencimento",
-                    "percentual": "30.00",
-                    "valor": "3052.41"
-                }
-            ]
-        }
+        Retorne apenas a lista de vantagens no formato:
+        [
+            {"codigo": "0002", "descricao": "Vencimento", "percentual": "30.00", "valor": "3052.41"},
+            {"codigo": "0205", "descricao": "Estab Econom G.F. Judic", "percentual": "10.07", "valor": "1229.52"}
+        ]
 
         Importante:
-        - Ignore completamente a coluna "Período"
+        - Retorne APENAS a lista JSON, sem texto adicional
         - Mantenha os zeros à esquerda nos códigos
         - Preserve os valores exatamente como aparecem
-        - Retorne apenas o JSON, sem texto adicional
+        - Ignore a coluna Período
         """
         
         # Enviar para Gemma via Ollama
@@ -326,34 +354,39 @@ class PDFProcessor:
             )
             
             if response.status_code != 200:
-                print(f"Erro ao usar Gemma3: {response.status_code}")
+                self.logger.error(f"Erro ao usar Gemma3: {response.status_code}")
                 return ""
             
-            # Tentar extrair o JSON da resposta
-            resposta = response.json()["response"]
+            # Extrair e limpar a resposta
+            resposta = response.json()["response"].strip()
             
-            # Limpar a resposta para garantir que é um JSON válido
-            resposta = resposta.strip()
-            inicio_json = resposta.find("{")
-            fim_json = resposta.rfind("}") + 1
+            # Encontrar a lista JSON
+            inicio = resposta.find("[")
+            fim = resposta.rfind("]") + 1
             
-            if inicio_json == -1 or fim_json == 0:
-                print("Não foi possível encontrar um JSON válido na resposta")
+            if inicio == -1 or fim == 0:
+                self.logger.error("Não foi possível encontrar uma lista JSON válida na resposta")
                 return ""
             
-            json_str = resposta[inicio_json:fim_json]
+            # Extrair apenas a lista JSON
+            json_str = resposta[inicio:fim]
+            
+            # Limpar caracteres problemáticos
+            json_str = re.sub(r'[\n\r\t]', '', json_str)
+            json_str = re.sub(r',\s*]', ']', json_str)
+            json_str = re.sub(r',\s*}', '}', json_str)
             
             # Tentar fazer o parse do JSON
             try:
                 dados = json.loads(json_str)
-                return dados
+                return {"response": dados}
             except json.JSONDecodeError as e:
-                print(f"Erro ao decodificar JSON: {str(e)}")
-                print(f"JSON problemático: {json_str}")
+                self.logger.error(f"Erro ao decodificar JSON: {str(e)}")
+                self.logger.error(f"JSON problemático: {json_str}")
                 return ""
                 
         except Exception as e:
-            print(f"Erro ao usar Gemma3: {str(e)}")
+            self.logger.error(f"Erro ao usar Gemma3: {str(e)}")
             return ""
 
     def _processar_resposta_llava(self, resposta: str) -> List[Vantagem]:
