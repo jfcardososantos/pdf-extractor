@@ -139,29 +139,47 @@ class PDFProcessor:
         self.logger.info("Inicialização do PDFProcessor concluída com sucesso")
 
     def process_pdf(self, pdf_path: str) -> dict:
-        # Verificar tipo de arquivo
-        file_type = magic.from_file(pdf_path, mime=True)
-        
-        # Tentar primeiro com pdfplumber para PDFs digitais
-        texto_digital = self._extrair_texto_digital(pdf_path)
-        
-        # Se não conseguir extrair texto suficiente, converter para imagem
-        if len(texto_digital.strip()) < 100:
-            texto_completo = self._processar_como_imagem(pdf_path)
-        else:
-            texto_completo = texto_digital
-        
-        # Extrair informações usando Llava para a imagem
-        resultado_llava = self._analisar_com_llava(pdf_path)
-        
-        # Se não conseguir com Llava, tentar com o texto
-        if not resultado_llava:
-            resultado = self._usar_ollama_fallback(texto_completo)
-        else:
-            resultado = resultado_llava
-        
-        # Retornar um dicionário com a resposta
-        return {"response": resultado, "texto_extraido": texto_completo}
+        try:
+            # Converter PDF para imagem
+            images = convert_from_path(pdf_path)
+            if not images:
+                self.logger.error("Nenhuma imagem extraída do PDF")
+                return {"response": "", "texto_extraido": ""}
+            
+            # Pegar primeira página
+            image = images[0]
+            
+            # Converter para RGB se necessário
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
+            
+            # Salvar temporariamente como PNG
+            temp_img_path = "temp_image.png"
+            image.save(temp_img_path, format='PNG')
+            
+            # Ler a imagem processada
+            with open(temp_img_path, "rb") as img_file:
+                img_data = base64.b64encode(img_file.read()).decode('utf-8')
+            
+            # Limpar arquivo temporário
+            try:
+                os.remove(temp_img_path)
+            except:
+                pass
+
+            # Processar com Gemma
+            resultado = self._processar_com_gemma(img_data)
+            
+            # Extrair texto para referência
+            texto_completo = self._extrair_texto_digital(pdf_path)
+            if len(texto_completo.strip()) < 100:
+                texto_completo = self._processar_como_imagem(pdf_path)
+            
+            return {"response": resultado, "texto_extraido": texto_completo}
+                
+        except Exception as e:
+            self.logger.error(f"Erro ao processar PDF: {str(e)}")
+            return {"response": "", "texto_extraido": ""}
 
     def _extrair_texto_digital(self, pdf_path: str) -> str:
         texto = ""
@@ -511,27 +529,30 @@ class PDFProcessor:
 
     def _usar_ollama_fallback(self, texto: str) -> str:
         prompt = f"""
-        Analise o seguinte texto de um contracheque e extraia as informações no seguinte formato:
+        Você é um especialista em extrair informações de contracheques. Analise o texto abaixo que foi extraído de um contracheque e identifique as informações solicitadas.
+
+        Regras importantes:
+        1. Procure por padrões como "NOME:", "MATRÍCULA:", etc.
+        2. Na seção de vantagens, procure por códigos numéricos seguidos de descrições e valores
+        3. Valores monetários geralmente aparecem no formato "R$ X.XXX,XX" ou apenas números com vírgula
+        4. Mantenha os zeros à esquerda nos códigos
+        5. Se não encontrar alguma informação, deixe em branco
+        6. Não invente ou suponha informações
+
+        Por favor, extraia e organize as informações no seguinte formato:
 
         DADOS PESSOAIS:
-        Nome: [nome completo]
-        Matrícula: [número]
-        Mês/Ano Referência: [mês/ano]
+        Nome: [extrair nome completo do servidor]
+        Matrícula: [extrair número da matrícula]
+        Mês/Ano Referência: [extrair mês e ano]
 
         VANTAGENS:
-        1. Código: [código]
-           Descrição: [descrição]
-           Percentual/Horas: [valor se houver]
-           Valor: R$ [valor]
-        2. Código: [próximo código]
-           ...
+        [Liste cada vantagem encontrada no formato:]
+        1. Código: [código numérico]
+           Descrição: [nome/descrição da vantagem]
+           Valor: R$ [valor monetário]
 
-        TOTAL DE VANTAGENS: R$ [valor total]
-
-        Por favor, mantenha este formato exato, preenchendo os campos entre colchetes com os valores encontrados.
-        Mantenha os zeros à esquerda nos códigos.
-        Preserve os valores monetários exatamente como aparecem.
-        Se algum campo não for encontrado, mantenha o campo mas deixe vazio.
+        TOTAL DE VANTAGENS: R$ [valor total das vantagens]
 
         Texto do contracheque:
         {texto}
@@ -543,7 +564,11 @@ class PDFProcessor:
                 json={
                     "model": "gemma3:12b",
                     "prompt": prompt,
-                    "stream": False
+                    "stream": False,
+                    "options": {
+                        "temperature": 0.1,
+                        "num_predict": 2048
+                    }
                 }
             )
 
@@ -563,4 +588,57 @@ class PDFProcessor:
             valor_str = valor_str.replace(".", "").replace(",", ".")
             return float(valor_str)
         except:
-            return 0.0 
+            return 0.0
+
+    def _processar_com_gemma(self, img_data: str) -> str:
+        prompt = """
+        Você é um especialista em extrair informações de contracheques. Analise esta imagem de um contracheque e identifique as informações solicitadas.
+
+        Regras importantes:
+        1. Procure por padrões como "NOME:", "MATRÍCULA:", etc.
+        2. Na seção de vantagens, procure por códigos numéricos seguidos de descrições e valores
+        3. Valores monetários geralmente aparecem no formato "R$ X.XXX,XX" ou apenas números com vírgula
+        4. Mantenha os zeros à esquerda nos códigos
+        5. Se não encontrar alguma informação, deixe em branco
+        6. Não invente ou suponha informações
+
+        Por favor, extraia e organize as informações no seguinte formato:
+
+        DADOS PESSOAIS:
+        Nome: [extrair nome completo do servidor]
+        Matrícula: [extrair número da matrícula]
+        Mês/Ano Referência: [extrair mês e ano]
+
+        VANTAGENS:
+        [Liste cada vantagem encontrada no formato:]
+        1. Código: [código numérico]
+           Descrição: [nome/descrição da vantagem]
+           Valor: R$ [valor monetário]
+
+        TOTAL DE VANTAGENS: R$ [valor total das vantagens]
+        """
+
+        try:
+            response = requests.post(
+                self.ollama_url,
+                json={
+                    "model": "gemma3:12b",
+                    "prompt": prompt,
+                    "stream": False,
+                    "images": [img_data],
+                    "options": {
+                        "temperature": 0.1,
+                        "num_predict": 2048
+                    }
+                }
+            )
+
+            if response.status_code != 200:
+                self.logger.error(f"Erro ao processar com Gemma: {response.status_code}")
+                return ""
+
+            return response.json().get("response", "")
+            
+        except Exception as e:
+            self.logger.error(f"Erro ao processar com Gemma: {str(e)}")
+            return "" 
