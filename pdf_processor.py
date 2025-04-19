@@ -601,6 +601,8 @@ class PDFProcessor:
         4. Mantenha os zeros à esquerda nos códigos
         5. Se não encontrar alguma informação, deixe em branco
         6. Não invente ou suponha informações
+        7. Preste muita atenção aos detalhes e números
+        8. Verifique cada linha cuidadosamente
 
         Por favor, extraia e organize as informações no seguinte formato:
 
@@ -616,6 +618,8 @@ class PDFProcessor:
            Valor: R$ [valor monetário]
 
         TOTAL DE VANTAGENS: R$ [valor total das vantagens]
+
+        Importante: Analise a imagem com muita atenção antes de responder. Verifique cada seção do contracheque cuidadosamente.
         """
 
         try:
@@ -627,17 +631,24 @@ class PDFProcessor:
                     "stream": False,
                     "images": [img_data],
                     "options": {
-                        "temperature": 0.1,
-                        "num_predict": 2048
+                        "temperature": 0.2,
+                        "num_predict": 4096,
+                        "top_k": 50,
+                        "top_p": 0.9,
+                        "context_window": 8192,
+                        "stop": ["</s>", "Human:", "Assistant:"]
                     }
                 }
             )
 
             if response.status_code != 200:
                 self.logger.error(f"Erro ao processar com Gemma: {response.status_code}")
+                self.logger.error(f"Resposta de erro: {response.text}")
                 return ""
 
-            return response.json().get("response", "")
+            resultado = response.json().get("response", "")
+            self.logger.info(f"Resposta do Gemma: {resultado}")
+            return resultado
             
         except Exception as e:
             self.logger.error(f"Erro ao processar com Gemma: {str(e)}")
