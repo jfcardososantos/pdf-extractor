@@ -138,7 +138,7 @@ class PDFProcessor:
         
         self.logger.info("Inicialização do PDFProcessor concluída com sucesso")
 
-    def process_pdf(self, pdf_path: str) -> ExtracaoResponse:
+    def process_pdf(self, pdf_path: str) -> str:
         # Verificar tipo de arquivo
         file_type = magic.from_file(pdf_path, mime=True)
         
@@ -151,8 +151,14 @@ class PDFProcessor:
         else:
             texto_completo = texto_digital
         
-        # Usar múltiplas estratégias para extrair informações
-        resultado = self._extrair_informacoes_estruturadas(texto_completo, pdf_path)
+        # Extrair informações usando Llava para a imagem
+        resultado_llava = self._analisar_com_llava(pdf_path)
+        
+        # Se não conseguir com Llava, tentar com o texto
+        if not resultado_llava:
+            resultado = self._usar_ollama_fallback(texto_completo)
+        else:
+            resultado = resultado_llava
         
         return resultado
 
@@ -343,7 +349,6 @@ class PDFProcessor:
         return vantagens
 
     def _analisar_com_llava(self, img_path: str) -> str:
-        # Converter PDF para imagem e processar
         try:
             # Converter PDF para imagem
             images = convert_from_path(img_path)
@@ -378,56 +383,30 @@ class PDFProcessor:
 
         # Preparar prompt para Llava
         prompt = """
-        Analise esta imagem de um contracheque. Na seção VANTAGENS, existem as seguintes colunas:
-        - Cód. (código da vantagem)
-        - Descrição (nome da vantagem)
-        - Perct./Horas (percentual ou horas)
-        - Período (ignorar esta coluna)
-        - Valor(R$) (valor monetário)
+        Analise esta imagem de um contracheque e extraia as seguintes informações:
 
-        Para cada linha da tabela de vantagens, retorne um objeto JSON com:
-        - codigo: o código da vantagem (primeira coluna)
-        - descricao: a descrição da vantagem (segunda coluna)
-        - percentual: o percentual/horas (terceira coluna)
-        - valor: o valor em R$ (última coluna)
+        Na seção VANTAGENS, liste cada linha com:
+        - Código
+        - Descrição
+        - Percentual/Horas (se houver)
+        - Valor em R$
 
-        Retorne apenas a lista de vantagens no formato:
-        [
-            {"codigo": "0002", "descricao": "Vencimento", "percentual": "30.00", "valor": "3052.41"},
-            {"codigo": "0205", "descricao": "Estab Econom G.F. Judic", "percentual": "10.07", "valor": "1229.52"}
-        ]
-
-        Importante:
-        - Retorne APENAS a lista JSON, sem texto adicional
-        - Mantenha os zeros à esquerda nos códigos
-        - Preserve os valores exatamente como aparecem
-        - Ignore a coluna Período
+        Ignore a coluna Período.
+        Mantenha os zeros à esquerda nos códigos.
+        Preserve os valores exatamente como aparecem.
         """
         
-        # Preparar payload
-        payload = {
-            "model": "llava:13b",
-            "prompt": prompt,
-            "stream": False,
-            "options": {
-                "temperature": 0.1,
-                "num_predict": 1024
-            }
-        }
-
-        # Adicionar imagem ao payload
-        if img_data:
-            payload["images"] = [img_data]
-            self.logger.info("Imagem processada e adicionada ao payload")
-
-        # Enviar para Llava via Ollama com mais detalhes de erro
+        # Enviar para Llava
         try:
             self.logger.info("Enviando requisição para Llava...")
             response = requests.post(
                 self.ollama_url,
-                json=payload,
-                headers={'Content-Type': 'application/json'},
-                timeout=60
+                json={
+                    "model": "llava:13b",
+                    "prompt": prompt,
+                    "stream": False,
+                    "images": [img_data]
+                }
             )
             
             if response.status_code != 200:
@@ -435,52 +414,11 @@ class PDFProcessor:
                 self.logger.error(f"Resposta de erro: {response.text}")
                 return ""
 
-            # Extrair e limpar a resposta
-            try:
-                resposta = response.json()
-                if "response" not in resposta:
-                    self.logger.error(f"Resposta não contém campo 'response': {resposta}")
-                    return ""
+            # Retornar resposta bruta
+            return response.json().get("response", "")
                 
-                resposta_texto = resposta["response"].strip()
-                self.logger.info(f"Resposta bruta do Llava: {resposta_texto}")
-                
-                # Encontrar a lista JSON
-                inicio = resposta_texto.find("[")
-                fim = resposta_texto.rfind("]") + 1
-                
-                if inicio == -1 or fim == 0:
-                    self.logger.error("Não foi possível encontrar uma lista JSON válida na resposta")
-                    self.logger.error(f"Resposta completa: {resposta_texto}")
-                    return ""
-                
-                # Extrair apenas a lista JSON
-                json_str = resposta_texto[inicio:fim]
-                
-                # Limpar caracteres problemáticos
-                json_str = re.sub(r'[\n\r\t]', '', json_str)
-                json_str = re.sub(r',\s*]', ']', json_str)
-                json_str = re.sub(r',\s*}', '}', json_str)
-                
-                # Tentar fazer o parse do JSON
-                try:
-                    dados = json.loads(json_str)
-                    return {"response": dados}
-                except json.JSONDecodeError as e:
-                    self.logger.error(f"Erro ao decodificar JSON: {str(e)}")
-                    self.logger.error(f"JSON problemático: {json_str}")
-                    return ""
-                    
-            except Exception as e:
-                self.logger.error(f"Erro ao processar resposta: {str(e)}")
-                self.logger.error(f"Resposta completa: {response.text}")
-                return ""
-                
-        except requests.exceptions.RequestException as e:
-            self.logger.error(f"Erro na requisição HTTP: {str(e)}")
-            return ""
         except Exception as e:
-            self.logger.error(f"Erro inesperado ao usar Llava: {str(e)}")
+            self.logger.error(f"Erro ao usar Llava: {str(e)}")
             return ""
 
     def _processar_resposta_llava(self, resposta: str) -> List[Vantagem]:
@@ -560,100 +498,38 @@ class PDFProcessor:
                 print(f"Erro ao converter valor total: {valor_str}")
         return 0.0
 
-    def _usar_ollama_fallback(self, texto: str) -> ExtracaoResponse:
+    def _usar_ollama_fallback(self, texto: str) -> str:
         prompt = f"""
-        Analise o seguinte texto de um contracheque e extraia as informações solicitadas.
-        Retorne APENAS um JSON válido com a seguinte estrutura, sem nenhum texto adicional:
-        {{
-            "nome_completo": "nome do funcionário",
-            "matricula": "número da matrícula",
-            "mes_ano_referencia": "mês/ano de referência",
-            "vantagens": [
-                {{
-                    "codigo": "código da vantagem",
-                    "descricao": "descrição da vantagem",
-                    "percentual_duracao": "",
-                    "valor": 0.0
-                }}
-            ],
-            "total_vantagens": 0.0
-        }}
+        Analise o seguinte texto de um contracheque e extraia:
+        - Nome completo do funcionário
+        - Número da matrícula
+        - Mês/ano de referência
+        - Lista de vantagens (código, descrição, percentual/horas se houver, valor)
+        - Total de vantagens
 
         Texto do contracheque:
         {texto}
         """
 
-        response = requests.post(
-            self.ollama_url,
-            json={
-                "model": "gemma3:12b",
-                "prompt": prompt,
-                "stream": False
-            }
-        )
-
-        if response.status_code != 200:
-            raise Exception("Erro ao processar texto com Ollama")
-
         try:
-            resultado_texto = response.json()["response"]
-            
-            # Limpar o texto para garantir um JSON válido
-            resultado_texto = resultado_texto.strip()
-            
-            # Encontrar o primeiro '{' e o último '}'
-            inicio_json = resultado_texto.find("{")
-            fim_json = resultado_texto.rfind("}") + 1
-            
-            if inicio_json == -1 or fim_json == 0:
-                raise Exception("Não foi possível encontrar um JSON válido na resposta")
-            
-            json_str = resultado_texto[inicio_json:fim_json]
-            
-            # Tentar limpar caracteres inválidos
-            json_str = json_str.replace('\n', ' ').replace('\r', '')
-            json_str = re.sub(r',\s*}', '}', json_str)  # Remove vírgulas extras antes de }
-            json_str = re.sub(r',\s*]', ']', json_str)  # Remove vírgulas extras antes de ]
-            
-            # Tentar fazer o parse do JSON
-            try:
-                dados = json.loads(json_str)
-            except json.JSONDecodeError as e:
-                print(f"Erro ao decodificar JSON: {str(e)}")
-                print(f"JSON problemático: {json_str}")
-                raise
-            
-            # Validar campos obrigatórios
-            campos_obrigatorios = ["nome_completo", "matricula", "mes_ano_referencia", "vantagens"]
-            for campo in campos_obrigatorios:
-                if campo not in dados:
-                    raise Exception(f"Campo obrigatório '{campo}' não encontrado na resposta")
-            
-            # Validar vantagens de forma mais flexível
-            for v in dados["vantagens"]:
-                # Garantir que todos os campos são strings
-                v["codigo"] = str(v.get("codigo", "")).strip()
-                v["descricao"] = str(v.get("descricao", "")).strip()
-                v["percentual_duracao"] = str(v.get("percentual_duracao", "")).strip()
-                
-                # Se não tiver código, usa a descrição
-                if not v["codigo"] and v["descricao"]:
-                    v["codigo"] = v["descricao"]
-                
-                # Se não tiver descrição, usa o código
-                if not v["descricao"] and v["codigo"]:
-                    v["descricao"] = v["codigo"]
-                
-                # Garantir que o valor é um número
-                try:
-                    v["valor"] = float(str(v.get("valor", "0")).replace('R$', '').replace('.', '').replace(',', '.'))
-                except ValueError:
-                    v["valor"] = 0.0
-            
-            return ExtracaoResponse(**dados)
+            response = requests.post(
+                self.ollama_url,
+                json={
+                    "model": "gemma3:12b",
+                    "prompt": prompt,
+                    "stream": False
+                }
+            )
+
+            if response.status_code != 200:
+                self.logger.error(f"Erro ao processar texto com Ollama: {response.status_code}")
+                return ""
+
+            return response.json().get("response", "")
             
         except Exception as e:
-            raise Exception(f"Erro ao processar resposta do Ollama: {str(e)}")
+            self.logger.error(f"Erro ao processar texto com Ollama: {str(e)}")
+            return ""
 
     def _normalizar_valor(self, valor_str: str) -> float:
         try:
