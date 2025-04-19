@@ -237,21 +237,31 @@ class PDFProcessor:
         if response and 'response' in response:
             for item in response['response']:
                 try:
-                    # Extrair campos
-                    codigo = item.get('codigo', '').strip()
-                    descricao = item.get('descricao', '').strip()
-                    percentual = item.get('percentual', '').strip()
-                    valor_str = item.get('valor', '').strip()
+                    # Extrair campos com valores padrão
+                    codigo = str(item.get('codigo', '')).strip()
+                    descricao = str(item.get('descricao', '')).strip()
+                    percentual = str(item.get('percentual', '')).strip()
+                    valor_str = str(item.get('valor', '')).strip()
                     
-                    # Validar campos obrigatórios
-                    if not codigo or not descricao or not valor_str:
-                        print(f"Campos obrigatórios ausentes no item: {item}")
+                    # Validar campos obrigatórios de forma mais flexível
+                    if not codigo and not descricao:
+                        print(f"Item sem código e descrição: {item}")
                         continue
+                    
+                    # Se não tiver código, usa a descrição como código
+                    if not codigo:
+                        codigo = descricao
+                    
+                    # Se não tiver descrição, usa o código como descrição
+                    if not descricao:
+                        descricao = codigo
                     
                     # Converter valor para float
                     valor = 0.0
                     try:
-                        valor = float(valor_str.replace('R$', '').replace('.', '').replace(',', '.'))
+                        # Limpar o valor antes de converter
+                        valor_str = valor_str.replace('R$', '').replace(' ', '').strip()
+                        valor = float(valor_str.replace('.', '').replace(',', '.'))
                     except ValueError:
                         print(f"Erro ao converter valor: {valor_str}")
                         continue
@@ -490,11 +500,25 @@ class PDFProcessor:
                 if campo not in dados:
                     raise Exception(f"Campo obrigatório '{campo}' não encontrado na resposta")
             
-            # Validar vantagens
+            # Validar vantagens de forma mais flexível
             for v in dados["vantagens"]:
-                if not v.get("codigo") or not v.get("descricao"):
-                    raise Exception("Vantagem sem código ou descrição")
-                if v.get("valor") is None:
+                # Garantir que todos os campos são strings
+                v["codigo"] = str(v.get("codigo", "")).strip()
+                v["descricao"] = str(v.get("descricao", "")).strip()
+                v["percentual_duracao"] = str(v.get("percentual_duracao", "")).strip()
+                
+                # Se não tiver código, usa a descrição
+                if not v["codigo"] and v["descricao"]:
+                    v["codigo"] = v["descricao"]
+                
+                # Se não tiver descrição, usa o código
+                if not v["descricao"] and v["codigo"]:
+                    v["descricao"] = v["codigo"]
+                
+                # Garantir que o valor é um número
+                try:
+                    v["valor"] = float(str(v.get("valor", "0")).replace('R$', '').replace('.', '').replace(',', '.'))
+                except ValueError:
                     v["valor"] = 0.0
             
             return ExtracaoResponse(**dados)
