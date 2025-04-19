@@ -138,7 +138,7 @@ class PDFProcessor:
         
         self.logger.info("Inicialização do PDFProcessor concluída com sucesso")
 
-    def process_pdf(self, pdf_path: str) -> str:
+    def process_pdf(self, pdf_path: str) -> dict:
         # Verificar tipo de arquivo
         file_type = magic.from_file(pdf_path, mime=True)
         
@@ -160,7 +160,8 @@ class PDFProcessor:
         else:
             resultado = resultado_llava
         
-        return resultado
+        # Retornar um dicionário com a resposta
+        return {"response": resultado, "texto_extraido": texto_completo}
 
     def _extrair_texto_digital(self, pdf_path: str) -> str:
         texto = ""

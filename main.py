@@ -1,12 +1,9 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import List, Optional
+from typing import Dict, Any
 import uvicorn
 import os
 from dotenv import load_dotenv
-import json
-import requests
 from pdf_processor import PDFProcessor
 
 load_dotenv()
@@ -24,20 +21,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-class Vantagem(BaseModel):
-    codigo: str
-    descricao: str
-    percentual_duracao: Optional[str]
-    valor: float
-
-class ExtracaoResponse(BaseModel):
-    nome_completo: str
-    matricula: str
-    mes_ano_referencia: str
-    vantagens: List[Vantagem]
-    total_vantagens: float
-
-@app.post("/extrair", response_model=ExtracaoResponse)
+@app.post("/extrair", response_model=Dict[str, Any])
 async def extrair_informacoes(pdf_file: UploadFile = File(...)):
     try:
         # Salvar o arquivo temporariamente
