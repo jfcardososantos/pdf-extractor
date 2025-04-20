@@ -28,6 +28,7 @@ RUN pip install --no-cache-dir \
     "transformers[torch]" \
     sentencepiece \
     protobuf \
+    python-dotenv \
     && pip install --no-cache-dir easyocr
 
 # Criar diretório de trabalho
