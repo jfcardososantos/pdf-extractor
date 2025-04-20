@@ -10,6 +10,7 @@ services:
     volumes:
       - ./main.py:/app/main.py
       - ./pdf_processor.py:/app/pdf_processor.py
+      - ./requirements.txt:/app/requirements.txt
       - pdf_cache:/app/cache
       - model_cache:/root/.cache
     deploy:
@@ -26,6 +27,8 @@ services:
       - HF_HOME=/app/cache/huggingface
       - EASYOCR_MODULE_PATH=/app/cache/easyocr
       - SENTENCEPIECE_DATA_DIR=/app/cache/sentencepiece
+      - SPACY_DATA_DIR=/app/cache/spacy
+      - TESSDATA_PREFIX=/usr/share/tesseract-ocr/4.00/tessdata
     networks:
       - pdf-extractor-network
 

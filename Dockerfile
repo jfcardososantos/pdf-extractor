@@ -11,29 +11,25 @@ RUN apt-get update && apt-get install -y \
     libpoppler-cpp-dev \
     pkg-config \
     python3-dev \
+    poppler-utils \
+    tesseract-ocr \
+    tesseract-ocr-por \
     && rm -rf /var/lib/apt/lists/*
-
-# Instalar dependências Python
-RUN pip install --no-cache-dir \
-    fastapi \
-    uvicorn \
-    python-multipart \
-    pdf2image \
-    pillow \
-    opencv-python \
-    numpy \
-    torch \
-    torchvision \
-    transformers \
-    "transformers[torch]" \
-    sentencepiece \
-    protobuf \
-    python-dotenv \
-    pdfplumber \
-    && pip install --no-cache-dir easyocr
 
 # Criar diretório de trabalho
 WORKDIR /app
+
+# Copiar arquivos de dependências primeiro
+COPY requirements.txt .
+
+# Instalar dependências Python
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Instalar modelo spaCy
+RUN python -m spacy download pt_core_news_lg
+
+# Criar diretório para cache
+RUN mkdir -p /app/cache && chmod -R 777 /app/cache
 
 # Copiar arquivos da aplicação
 COPY main.py .
