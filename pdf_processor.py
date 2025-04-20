@@ -487,13 +487,13 @@ class PDFProcessor:
                     
         return vantagens
 
-    def _analisar_com_llava(self, img_path: str) -> str:
+    def _analisar_com_llava(self, img_path: str) -> dict:
         try:
             # Converter PDF para imagem
             images = convert_from_path(img_path)
             if not images:
                 self.logger.error("Nenhuma imagem extraída do PDF")
-                return ""
+                return {"response": []}
             
             # Pegar primeira página
             image = images[0]
@@ -518,28 +518,29 @@ class PDFProcessor:
                 
         except Exception as e:
             self.logger.error(f"Erro ao processar imagem: {str(e)}")
-            return ""
+            return {"response": []}
 
         # Preparar prompt para Llava
         prompt = """
-        Analise esta imagem de um contracheque e extraia as informações no seguinte formato:
+        Analise esta imagem de um contracheque e extraia as informações no seguinte formato JSON:
 
-        DADOS PESSOAIS:
-        Nome: [nome completo]
-        Matrícula: [número]
-        Mês/Ano Referência: [mês/ano]
+        {
+            "nome": "nome completo",
+            "matricula": "número da matrícula",
+            "mes_ano_referencia": "mês/ano",
+            "vantagens": [
+                {
+                    "codigo": "código",
+                    "descricao": "descrição",
+                    "percentual_duracao": "valor se houver",
+                    "valor": valor_numerico
+                },
+                ...
+            ],
+            "total_vantagens": valor_numerico
+        }
 
-        VANTAGENS:
-        1. Código: [código]
-           Descrição: [descrição]
-           Percentual/Horas: [valor se houver]
-           Valor: R$ [valor]
-        2. Código: [próximo código]
-           ...
-
-        TOTAL DE VANTAGENS: R$ [valor total]
-
-        Por favor, mantenha este formato exato, preenchendo os campos entre colchetes com os valores encontrados.
+        Por favor, retorne APENAS o JSON, sem nenhum texto adicional.
         Mantenha os zeros à esquerda nos códigos.
         Preserve os valores monetários exatamente como aparecem.
         Se algum campo não for encontrado, mantenha o campo mas deixe vazio.
@@ -561,14 +562,26 @@ class PDFProcessor:
             if response.status_code != 200:
                 self.logger.error(f"Erro ao usar Llava. Status: {response.status_code}")
                 self.logger.error(f"Resposta de erro: {response.text}")
-                return ""
+                return {"response": []}
 
-            # Retornar resposta bruta
-            return response.json().get("response", "")
+            # Tentar extrair o JSON da resposta
+            resposta = response.json().get("response", "")
+            try:
+                # Procurar por um bloco JSON na resposta
+                json_match = re.search(r'\{.*\}', resposta, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group(0)
+                    return json.loads(json_str)
+                else:
+                    self.logger.error("Não foi possível encontrar JSON na resposta")
+                    return {"response": []}
+            except json.JSONDecodeError as e:
+                self.logger.error(f"Erro ao decodificar JSON: {str(e)}")
+                return {"response": []}
                 
         except Exception as e:
             self.logger.error(f"Erro ao usar Llava: {str(e)}")
-            return ""
+            return {"response": []}
 
     def _processar_resposta_llava(self, resposta: str) -> List[Vantagem]:
         vantagens = []
