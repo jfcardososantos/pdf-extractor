@@ -29,6 +29,7 @@ RUN pip install --no-cache-dir \
     sentencepiece \
     protobuf \
     python-dotenv \
+    pdfplumber \
     && pip install --no-cache-dir easyocr
 
 # Criar diretório de trabalho
