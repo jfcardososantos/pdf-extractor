@@ -13,7 +13,7 @@ import requests
 from pydantic import BaseModel
 from Levenshtein import ratio
 import re
-from transformers import pipeline
+from transformers import pipeline, DonutProcessor, VisionEncoderDecoderModel
 from PIL import Image
 import io
 import magic
@@ -136,42 +136,169 @@ class PDFProcessor:
             self.logger.error(f"Erro ao verificar modelos: {str(e)}")
             raise
         
+        # Inicializar o Donut
+        try:
+            self.processor = DonutProcessor.from_pretrained("naver-clova-ix/donut-base-finetuned-cord-v2")
+            self.model = VisionEncoderDecoderModel.from_pretrained("naver-clova-ix/donut-base-finetuned-cord-v2")
+            
+            # Mover para GPU se disponível
+            if torch.cuda.is_available():
+                self.model = self.model.to("cuda")
+                self.logger.info("Modelo Donut carregado na GPU")
+            else:
+                self.logger.info("Modelo Donut carregado na CPU")
+                
+        except Exception as e:
+            self.logger.error(f"Erro ao carregar modelo Donut: {str(e)}")
+            raise
+        
         self.logger.info("Inicialização do PDFProcessor concluída com sucesso")
 
     def process_pdf(self, pdf_path: str) -> dict:
         try:
             # Converter PDF para imagem
-            images = convert_from_path(pdf_path, dpi=300)  # Aumentando DPI base
+            images = convert_from_path(pdf_path, dpi=300)
             if not images:
                 self.logger.error("Nenhuma imagem extraída do PDF")
-                return {"response": "", "texto_extraido": ""}
+                return {"response": "[]", "texto_extraido": ""}
             
-            # Pegar primeira página
+            # Processar primeira página
             image = images[0]
             
-            # Converter para RGB se necessário
-            if image.mode != 'RGB':
-                image = image.convert('RGB')
-
-            # Processar dados pessoais
-            dados_pessoais = self._extrair_dados_pessoais(image)
+            # Preparar imagem para o Donut
+            pixel_values = self.processor(image, return_tensors="pt").pixel_values
+            if torch.cuda.is_available():
+                pixel_values = pixel_values.to("cuda")
             
-            # Processar seção de vantagens com alta qualidade
-            vantagens = self._processar_vantagens(image)
+            # Definir prompt específico para contracheque
+            task_prompt = """<s_cord-v2>
+            Extraia as seguintes informações do contracheque:
+            - Nome completo
+            - Matrícula
+            - Mês/Ano de referência
+            - Classe
+            - Da tabela de VANTAGENS:
+              - Código
+              - Descrição
+              - Percentual/Horas (se houver)
+              - Período (se houver)
+              - Valor em R$
+            </s_cord-v2>"""
             
-            # Combinar resultados
-            resultado = f"{dados_pessoais}\n\n{vantagens}"
+            # Gerar tokens do prompt
+            decoder_input_ids = self.processor.tokenizer(
+                task_prompt, 
+                add_special_tokens=False, 
+                return_tensors="pt"
+            ).input_ids
             
-            # Extrair texto para referência
-            texto_completo = self._extrair_texto_digital(pdf_path)
-            if len(texto_completo.strip()) < 100:
-                texto_completo = self._processar_como_imagem(pdf_path)
+            # Fazer a inferência
+            outputs = self.model.generate(
+                pixel_values,
+                decoder_input_ids=decoder_input_ids,
+                max_length=512,
+                early_stopping=True,
+                pad_token_id=self.processor.tokenizer.pad_token_id,
+                eos_token_id=self.processor.tokenizer.eos_token_id,
+                use_cache=True,
+                num_beams=4,
+                temperature=0.1,
+                top_p=0.95,
+            )
             
-            return {"response": resultado, "texto_extraido": texto_completo}
+            # Decodificar a saída
+            extracted_text = self.processor.batch_decode(outputs, skip_special_tokens=True)[0]
+            
+            # Processar o texto extraído para o formato JSON
+            response = self._processar_saida_donut(extracted_text)
+            
+            return {
+                "response": response,
+                "texto_extraido": extracted_text
+            }
                 
         except Exception as e:
             self.logger.error(f"Erro ao processar PDF: {str(e)}")
-            return {"response": "", "texto_extraido": ""}
+            return {"response": "[]", "texto_extraido": ""}
+
+    def _processar_saida_donut(self, texto: str) -> str:
+        """
+        Processa a saída do Donut e formata no formato JSON especificado.
+        """
+        try:
+            # Extrair informações usando expressões regulares
+            import re
+            
+            # Padrões para extração
+            patterns = {
+                'nome': r'Nome[:\s]+([^\n]+)',
+                'matricula': r'Matrícula[:\s]+(\d+)',
+                'mes_ano': r'Mês/Ano[:\s]+([^\n]+)',
+                'classe': r'Classe[:\s]+(\d+)',
+                'vantagem': r'Código[:\s]+(\w+)[^\n]*\nDescrição[:\s]+([^\n]+)[^\n]*\n(?:Percentual/Horas[:\s]+([^\n]+)\n)?(?:Período[:\s]+([^\n]+)\n)?Valor[:\s]+R\$\s*([\d\.,]+)'
+            }
+            
+            # Extrair dados básicos
+            nome = re.search(patterns['nome'], texto)
+            matricula = re.search(patterns['matricula'], texto)
+            mes_ano = re.search(patterns['mes_ano'], texto)
+            classe = re.search(patterns['classe'], texto)
+            
+            # Processar mês e ano
+            mes = ""
+            ano = ""
+            if mes_ano:
+                mes_ano_str = mes_ano.group(1).strip()
+                # Tentar extrair mês e ano do formato MM/YYYY ou MMM/YYYY
+                mes_match = re.search(r'([a-z]{3})/(\d{4})', mes_ano_str.lower())
+                if mes_match:
+                    mes = mes_match.group(1)
+                    ano = int(mes_match.group(2))
+            
+            # Extrair vantagens
+            vantagens = []
+            vantagens_raw = re.finditer(patterns['vantagem'], texto)
+            for v in vantagens_raw:
+                # Processar percentual/horas
+                perct_horas = None
+                if v.group(3):
+                    try:
+                        perct_horas = float(v.group(3).replace(',', '.'))
+                    except ValueError:
+                        pass
+                
+                # Processar período
+                periodo = v.group(4) if v.group(4) else None
+                
+                # Processar valor
+                valor = 0.0
+                if v.group(5):
+                    try:
+                        valor_str = v.group(5).replace('.', '').replace(',', '.')
+                        valor = float(valor_str)
+                    except ValueError:
+                        pass
+                
+                vantagem = {
+                    "nome": nome.group(1).strip() if nome else "",
+                    "matricula": matricula.group(1).strip() if matricula else "",
+                    "mes": mes,
+                    "ano": ano,
+                    "classe": classe.group(1).strip() if classe else "",
+                    "codigo": v.group(1).strip(),
+                    "descricao": v.group(2).strip(),
+                    "perct_horas": perct_horas,
+                    "periodo": periodo,
+                    "valor": valor
+                }
+                vantagens.append(vantagem)
+            
+            # Converter para JSON
+            return json.dumps(vantagens, ensure_ascii=False, indent=4)
+            
+        except Exception as e:
+            self.logger.error(f"Erro ao processar saída do Donut: {str(e)}")
+            return "[]"  # Retorna array vazio em caso de erro
 
     def _extrair_texto_digital(self, pdf_path: str) -> str:
         texto = ""
@@ -580,126 +707,4 @@ class PDFProcessor:
             valor_str = valor_str.replace(".", "").replace(",", ".")
             return float(valor_str)
         except:
-            return 0.0
-
-    def _extrair_dados_pessoais(self, image) -> str:
-        # Salvar temporariamente como PNG
-        temp_img_path = "temp_image_dados.png"
-        image.save(temp_img_path, format='PNG')
-        
-        try:
-            # Ler a imagem processada
-            with open(temp_img_path, "rb") as img_file:
-                img_data = base64.b64encode(img_file.read()).decode('utf-8')
-            
-            prompt = """
-            Extraia apenas os seguintes dados do cabeçalho do contracheque:
-
-            DADOS PESSOAIS:
-            Nome: [nome completo do servidor]
-            Matrícula: [número da matrícula]
-            Mês/Ano Referência: [mês/ano]
-            """
-
-            response = requests.post(
-                self.ollama_url,
-                json={
-                    "model": "llama3.2-vision:11b-instruct-q8_0",
-                    "prompt": prompt,
-                    "stream": False,
-                    "images": [img_data],
-                    "options": {
-                        "temperature": 0.1,
-                        "num_predict": 1024
-                    }
-                }
-            )
-
-            os.remove(temp_img_path)
-            return response.json().get("response", "")
-            
-        except Exception as e:
-            self.logger.error(f"Erro ao extrair dados pessoais: {str(e)}")
-            if os.path.exists(temp_img_path):
-                os.remove(temp_img_path)
-            return ""
-
-    def _processar_vantagens(self, image) -> str:
-        try:
-            # Aumentar qualidade especificamente para a seção de vantagens
-            # Primeiro, vamos criar uma cópia da imagem com alta resolução
-            width, height = image.size
-            image_hq = image.resize((width*2, height*2), Image.Resampling.LANCZOS)
-            
-            # Melhorar contraste para a seção de vantagens
-            from PIL import ImageEnhance
-            enhancer = ImageEnhance.Contrast(image_hq)
-            image_hq = enhancer.enhance(1.2)  # Aumentar contraste em 20%
-            
-            # Salvar temporariamente como PNG em alta qualidade
-            temp_img_path = "temp_image_vantagens.png"
-            image_hq.save(temp_img_path, format='PNG', quality=100)
-            
-            # Ler a imagem processada
-            with open(temp_img_path, "rb") as img_file:
-                img_data = base64.b64encode(img_file.read()).decode('utf-8')
-
-            prompt = """
-            Analise APENAS a tabela de VANTAGENS deste contracheque. A tabela tem estas colunas:
-
-            | Cód. | Descrição | Perct./Horas | Período | Valor(R$) |
-
-            ATENÇÃO ESPECIAL:
-            1. Foque APENAS na seção de VANTAGENS
-            2. Cada linha SEMPRE tem um valor monetário na última coluna (Valor(R$))
-            3. NUNCA retorne valor R$ 0,00 - se há uma linha na tabela, ela tem um valor real
-            4. Perct./Horas e Período podem estar vazios - neste caso, deixe em branco
-            5. Extraia EXATAMENTE os valores como estão na imagem
-
-            Exemplo de como deve ser a extração:
-            VANTAGENS:
-            1. Código: 0022P
-               Descrição: Vencimento Inc
-               Percentual/Horas: 30.00
-               Período: 02.2021
-               Valor: R$ 2.693,71
-
-            2. Código: 0251
-               Descrição: Grat Atividade Fiscal Inc
-               Percentual/Horas: 98.74
-               Período: 02.2021
-               Valor: R$ 10.639,08
-
-            TOTAL DE VANTAGENS: R$ [soma exata de todos os valores]
-
-            REGRAS CRÍTICAS:
-            - NUNCA use R$ 0,00 como valor
-            - Mantenha EXATAMENTE a formatação dos números (pontos e vírgulas)
-            - Extraia TODOS os valores monetários da última coluna
-            - Se uma linha existe na tabela, ela TEM um valor monetário real
-            """
-
-            response = requests.post(
-                self.ollama_url,
-                json={
-                    "model": "llama3.2-vision:11b-instruct-q8_0",
-                    "prompt": prompt,
-                    "stream": False,
-                    "images": [img_data],
-                    "options": {
-                        "temperature": 0.1,
-                        "num_predict": 4096,
-                        "top_p": 0.9,
-                        "repeat_penalty": 1.1
-                    }
-                }
-            )
-
-            os.remove(temp_img_path)
-            return response.json().get("response", "")
-            
-        except Exception as e:
-            self.logger.error(f"Erro ao processar vantagens: {str(e)}")
-            if os.path.exists(temp_img_path):
-                os.remove(temp_img_path)
-            return "" 
+            return 0.0 
