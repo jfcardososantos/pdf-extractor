@@ -140,14 +140,8 @@ class PDFProcessor:
         try:
             self.processor = DonutProcessor.from_pretrained("naver-clova-ix/donut-base-finetuned-cord-v2")
             self.model = VisionEncoderDecoderModel.from_pretrained("naver-clova-ix/donut-base-finetuned-cord-v2")
-            
-            # Mover para GPU se disponível
-            if torch.cuda.is_available():
-                self.model = self.model.to("cuda")
-                self.logger.info("Modelo Donut carregado na GPU")
-            else:
-                self.logger.info("Modelo Donut carregado na CPU")
-                
+            self.model = self.model.to(self.device)
+            self.logger.info("Modelo Donut carregado na GPU")
         except Exception as e:
             self.logger.error(f"Erro ao carregar modelo Donut: {str(e)}")
             raise
@@ -156,70 +150,77 @@ class PDFProcessor:
 
     def process_pdf(self, pdf_path: str) -> dict:
         try:
-            # Converter PDF para imagem
-            images = convert_from_path(pdf_path, dpi=300)
-            if not images:
-                self.logger.error("Nenhuma imagem extraída do PDF")
-                return {"response": "[]", "texto_extraido": ""}
-            
-            # Processar primeira página
-            image = images[0]
-            
-            # Preparar imagem para o Donut
-            pixel_values = self.processor(image, return_tensors="pt").pixel_values
-            if torch.cuda.is_available():
-                pixel_values = pixel_values.to("cuda")
-            
-            # Definir prompt específico para contracheque
-            task_prompt = """<s_cord-v2>
-            Extraia as seguintes informações do contracheque:
-            - Nome completo
-            - Matrícula
-            - Mês/Ano de referência
-            - Classe
-            - Da tabela de VANTAGENS:
-              - Código
-              - Descrição
-              - Percentual/Horas (se houver)
-              - Período (se houver)
-              - Valor em R$
-            </s_cord-v2>"""
-            
-            # Gerar tokens do prompt
-            decoder_input_ids = self.processor.tokenizer(
-                task_prompt, 
-                add_special_tokens=False, 
-                return_tensors="pt"
-            ).input_ids
-            
-            # Fazer a inferência
-            outputs = self.model.generate(
-                pixel_values,
-                decoder_input_ids=decoder_input_ids,
-                max_length=512,
-                early_stopping=True,
-                pad_token_id=self.processor.tokenizer.pad_token_id,
-                eos_token_id=self.processor.tokenizer.eos_token_id,
-                use_cache=True,
-                num_beams=4,
-                temperature=0.1,
-                top_p=0.95,
-            )
-            
-            # Decodificar a saída
-            extracted_text = self.processor.batch_decode(outputs, skip_special_tokens=True)[0]
-            
-            # Processar o texto extraído para o formato JSON
-            response = self._processar_saida_donut(extracted_text)
-            
-            return {
-                "response": response,
-                "texto_extraido": extracted_text
-            }
-                
+            # Verificar se o arquivo existe
+            if not os.path.exists(pdf_path):
+                raise FileNotFoundError(f"Arquivo não encontrado: {pdf_path}")
+
+            # Processar o PDF
+            texto = self._extrair_texto_digital(pdf_path)
+            if not texto.strip():
+                texto = self._processar_como_imagem(pdf_path)
+
+            # Extrair informações estruturadas
+            resultado = self._extrair_informacoes_estruturadas(texto, pdf_path)
+            return resultado.dict()
+
         except Exception as e:
             self.logger.error(f"Erro ao processar PDF: {str(e)}")
-            return {"response": "[]", "texto_extraido": ""}
+            raise
+
+    def _processar_como_imagem(self, pdf_path: str) -> str:
+        try:
+            # Converter PDF para imagens com alta resolução
+            images = convert_from_path(pdf_path, dpi=300)
+            texto_completo = []
+
+            for image in images:
+                # Pré-processar imagem
+                processed_image = self._preprocess_image(image)
+                
+                # Converter para tensor e mover para o dispositivo correto
+                image_tensor = self.processor(processed_image, return_tensors="pt").pixel_values
+                image_tensor = image_tensor.to(self.device)
+                
+                # Gerar texto com o modelo Donut
+                with torch.no_grad():
+                    outputs = self.model.generate(
+                        image_tensor,
+                        max_length=512,
+                        early_stopping=True,
+                        pad_token_id=self.processor.tokenizer.pad_token_id,
+                        eos_token_id=self.processor.tokenizer.eos_token_id,
+                        use_cache=True,
+                        num_beams=1,
+                        bad_words_ids=[[self.processor.tokenizer.unk_token_id]],
+                        return_dict_in_generate=True,
+                        output_scores=True
+                    )
+                
+                # Decodificar a saída
+                texto = self.processor.batch_decode(outputs.sequences)[0]
+                texto = self._processar_saida_donut(texto)
+                texto_completo.append(texto)
+
+            return "\n".join(texto_completo)
+
+        except Exception as e:
+            self.logger.error(f"Erro ao processar PDF como imagem: {str(e)}")
+            raise
+
+    def _preprocess_image(self, image):
+        # Converter para escala de cinza
+        gray = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2GRAY)
+        
+        # Aplicar limiarização adaptativa
+        thresh = cv2.adaptiveThreshold(
+            gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+            cv2.THRESH_BINARY, 11, 2
+        )
+        
+        # Converter de volta para RGB
+        rgb = cv2.cvtColor(thresh, cv2.COLOR_GRAY2RGB)
+        
+        return Image.fromarray(rgb)
 
     def _processar_saida_donut(self, texto: str) -> str:
         """
