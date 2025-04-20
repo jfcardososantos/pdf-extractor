@@ -25,6 +25,7 @@ services:
       - TORCH_HOME=/app/cache/torch
       - HF_HOME=/app/cache/huggingface
       - EASYOCR_MODULE_PATH=/app/cache/easyocr
+      - SENTENCEPIECE_DATA_DIR=/app/cache/sentencepiece
     networks:
       - pdf-extractor-network
 

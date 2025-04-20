@@ -1,65 +1,44 @@
-FROM nvidia/cuda:11.8.0-runtime-ubuntu22.04
+FROM python:3.9-slim
 
-ENV DEBIAN_FRONTEND=noninteractive
-ENV CUDA_VISIBLE_DEVICES=0
-ENV CUDA_LAUNCH_BLOCKING=1
-ENV TORCH_USE_CUDA_DSA=1
-
-# Instala dependências do sistema
+# Instalar dependências do sistema
 RUN apt-get update && apt-get install -y \
-    python3.10 \
-    python3-pip \
-    python3.10-venv \
+    build-essential \
     libgl1-mesa-glx \
-    tesseract-ocr \
-    tesseract-ocr-por \
-    poppler-utils \
-    libmagic1 \
-    git \
-    && apt-get clean \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libpoppler-cpp-dev \
+    pkg-config \
+    python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Cria diretório de trabalho
+# Instalar dependências Python
+RUN pip install --no-cache-dir \
+    fastapi \
+    uvicorn \
+    python-multipart \
+    pdf2image \
+    pillow \
+    opencv-python \
+    numpy \
+    torch \
+    torchvision \
+    transformers \
+    "transformers[torch]" \
+    sentencepiece \
+    protobuf \
+    && pip install --no-cache-dir easyocr
+
+# Criar diretório de trabalho
 WORKDIR /app
 
-# Cria e ativa ambiente virtual
-RUN python3 -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
-
-# Copia apenas os arquivos de dependências primeiro
-COPY requirements.txt .
-
-# Instala as dependências em camadas para melhor cache
-RUN pip install --upgrade pip && \
-    pip install torch==2.1.0+cu118 torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu118
-
-# Instala outras dependências pesadas que raramente mudam
-RUN pip install \
-    transformers==4.35.0 \
-    easyocr==1.7.1 \
-    spacy==3.7.2
-
-# Instala o modelo do spaCy
-RUN python -m spacy download pt_core_news_lg
-
-# Instala o restante das dependências
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Cria diretório para cache
-RUN mkdir -p /app/cache
-
-# Copia os arquivos de código
+# Copiar arquivos da aplicação
 COPY main.py .
 COPY pdf_processor.py .
-COPY start.sh /start.sh
 
-# Configura permissões
-RUN chmod +x /start.sh && \
-    chmod -R 777 /app/cache
-
-# Volume para cache persistente
-VOLUME ["/app/cache"]
-
+# Expor porta
 EXPOSE 8000
 
-CMD ["/start.sh"]
+# Comando para iniciar a aplicação
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
