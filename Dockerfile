@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y \
     poppler-utils \
     tesseract-ocr \
     tesseract-ocr-por \
+    libmagic1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Criar diretório de trabalho
