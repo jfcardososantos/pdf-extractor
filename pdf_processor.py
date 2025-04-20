@@ -148,7 +148,7 @@ class PDFProcessor:
         
         self.logger.info("Inicialização do PDFProcessor concluída com sucesso")
 
-    def process_pdf(self, pdf_path: str) -> dict:
+    def process_pdf(self, pdf_path: str) -> str:
         try:
             # Verificar se o arquivo existe
             if not os.path.exists(pdf_path):
@@ -161,11 +161,29 @@ class PDFProcessor:
 
             # Extrair informações estruturadas
             resultado = self._extrair_informacoes_estruturadas(texto, pdf_path)
-            return resultado.dict()
+            
+            # Formatar a saída como string
+            output = []
+            output.append(f"Nome: {resultado.nome_completo}")
+            output.append(f"Matrícula: {resultado.matricula}")
+            output.append(f"Mês/Ano Referência: {resultado.mes_ano_referencia}")
+            output.append("\nVANTAGENS:")
+            
+            for i, vantagem in enumerate(resultado.vantagens, 1):
+                output.append(f"{i}. Código: {vantagem.codigo}")
+                output.append(f"   Descrição: {vantagem.descricao}")
+                if vantagem.percentual_duracao:
+                    output.append(f"   Percentual/Duração: {vantagem.percentual_duracao}")
+                output.append(f"   Valor: R$ {vantagem.valor:.2f}")
+                output.append("")
+            
+            output.append(f"TOTAL DE VANTAGENS: R$ {resultado.total_vantagens:.2f}")
+            
+            return "\n".join(output)
 
         except Exception as e:
             self.logger.error(f"Erro ao processar PDF: {str(e)}")
-            raise
+            return "Erro ao processar o PDF. Por favor, tente novamente."
 
     def _processar_como_imagem(self, pdf_path: str) -> str:
         try:
@@ -522,25 +540,24 @@ class PDFProcessor:
 
         # Preparar prompt para Llava
         prompt = """
-        Analise esta imagem de um contracheque e extraia as informações no seguinte formato JSON:
+        Analise esta imagem de um contracheque e extraia as informações no seguinte formato:
 
-        {
-            "nome": "nome completo",
-            "matricula": "número da matrícula",
-            "mes_ano_referencia": "mês/ano",
-            "vantagens": [
-                {
-                    "codigo": "código",
-                    "descricao": "descrição",
-                    "percentual_duracao": "valor se houver",
-                    "valor": valor_numerico
-                },
-                ...
-            ],
-            "total_vantagens": valor_numerico
-        }
+        DADOS PESSOAIS:
+        Nome: [nome completo]
+        Matrícula: [número]
+        Mês/Ano Referência: [mês/ano]
 
-        Por favor, retorne APENAS o JSON, sem nenhum texto adicional.
+        VANTAGENS:
+        1. Código: [código]
+           Descrição: [descrição]
+           Percentual/Horas: [valor se houver]
+           Valor: R$ [valor]
+        2. Código: [próximo código]
+           ...
+
+        TOTAL DE VANTAGENS: R$ [valor total]
+
+        Por favor, mantenha este formato exato, preenchendo os campos entre colchetes com os valores encontrados.
         Mantenha os zeros à esquerda nos códigos.
         Preserve os valores monetários exatamente como aparecem.
         Se algum campo não for encontrado, mantenha o campo mas deixe vazio.
@@ -564,20 +581,9 @@ class PDFProcessor:
                 self.logger.error(f"Resposta de erro: {response.text}")
                 return {"response": []}
 
-            # Tentar extrair o JSON da resposta
+            # Retornar resposta formatada
             resposta = response.json().get("response", "")
-            try:
-                # Procurar por um bloco JSON na resposta
-                json_match = re.search(r'\{.*\}', resposta, re.DOTALL)
-                if json_match:
-                    json_str = json_match.group(0)
-                    return json.loads(json_str)
-                else:
-                    self.logger.error("Não foi possível encontrar JSON na resposta")
-                    return {"response": []}
-            except json.JSONDecodeError as e:
-                self.logger.error(f"Erro ao decodificar JSON: {str(e)}")
-                return {"response": []}
+            return {"response": resposta}
                 
         except Exception as e:
             self.logger.error(f"Erro ao usar Llava: {str(e)}")
